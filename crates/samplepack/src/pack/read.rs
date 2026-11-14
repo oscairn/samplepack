@@ -134,7 +134,7 @@ impl<'a> Pack<'a> {
         }
         let toff = usize_of(toff)?;
         let t = data.get(toff..).unwrap_or(&[]);
-        if magic_of(t) != MAGIC_TRAILER {
+        if magic_of(t) != MAGIC_TRAILER || rd_u64(t, 8) != tlen {
             return Err(Error::BadFooter);
         }
         if rd_u16(t, 4) != MAJOR {

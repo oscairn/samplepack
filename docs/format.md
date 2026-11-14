@@ -326,7 +326,7 @@ caller writes the buffers at the offsets above and performs the syncs.
 3. The length is a multiple of P and the last 32 bytes are a footer with a valid checksum; else
    `NO_FOOTER`. The footer's fields agree (trailer offset a multiple of P, at least P, trailer
    offset + trailer length = file length; else `BAD_FOOTER`).
-4. The trailer has magic `OSPI` (else `BAD_FOOTER`), major 1, a valid prefix and checksum, and a
+4. The trailer has magic `OSPI` and the length the footer states (else `BAD_FOOTER`), major 1, a valid prefix and checksum, and a
    count consistent with its lengths (`BAD_TRAILER`).
 5. Every trailer entry is aligned and inside [P, trailer offset), and the entries are in file order
    without overlap (`BAD_OFFSET`, `OVERLAP`).

@@ -336,6 +336,16 @@ fn every_rejection_reason() {
         })),
         Err(Error::ReservedNonZero)
     );
+    // a footer whose trailer length disagrees with the trailer entry's: a page after the trailer
+    // ending in a footer that claims the trailer runs to the end of the file
+    let mut long = good.clone();
+    let mut foot = good[f..].to_vec();
+    wr64(&mut foot, 16, (good.len() - t + PAGE) as u64);
+    long.resize(good.len() + PAGE - 32, 0);
+    long.extend(foot);
+    reseal_footer(&mut long);
+    assert_eq!(open(&long), Err(Error::BadFooter));
+    assert_eq!(recover(&long), Ok(good.len()));
     assert_eq!(open(&edit(&|d| d[t + 40] ^= 1)), Err(Error::BadChecksum));
     assert_eq!(open(&edit(&|d| d[t + 4] = 2)), Err(Error::UnsupportedVersion));
     assert_eq!(
