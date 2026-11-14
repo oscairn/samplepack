@@ -5,6 +5,7 @@
 
 use samplepack::flac::{Error, FrameEntry, FrameInfo, Scratch, FLAG_CHECK_CRC, MAX_BLOCK, MAX_LPC_ORDER};
 use samplepack::pack::{self, IndexEntry, RecordInfo, VerifyScratch};
+use samplepack::waveform::{self, KeyBank};
 use std::mem::{align_of, offset_of, size_of};
 use std::path::PathBuf;
 use std::process::Command;
@@ -96,6 +97,67 @@ fn header_matches_library() {
     for (name, v) in pack_errors {
         e += &format!("_Static_assert({name} == {}, \"{name}\");\n", v.code());
     }
+    use waveform::Error as W;
+    let waveform_errors = [
+        ("SP_ERR_INVALID_ARGUMENT", W::InvalidArgument),
+        ("SP_ERR_BUFFER_TOO_SMALL", W::BufferTooSmall),
+        ("SP_ERR_NOT_WAVEFORM", W::NotWaveform),
+        ("SP_ERR_WF_VERSION", W::UnsupportedVersion),
+        ("SP_ERR_WF_FLAGS", W::BadFlags),
+        ("SP_ERR_WF_LENGTH", W::BadLength),
+        ("SP_ERR_WF_SIZE", W::BadSize),
+        ("SP_ERR_WF_CHECKSUM", W::BadChecksum),
+        ("SP_ERR_WF_SAMPLE_COUNT", W::BadSampleCount),
+        ("SP_ERR_WF_BANK_COUNT", W::BadBankCount),
+        ("SP_ERR_WF_RESERVED", W::ReservedNonZero),
+        ("SP_ERR_WF_RANGE", W::BadRange),
+        ("SP_ERR_WF_LOW_ABOVE_HIGH", W::LowAboveHigh),
+        ("SP_ERR_WF_SAMPLE_INDEX", W::BadSampleIndex),
+        ("SP_ERR_WF_LOOP", W::BadLoop),
+        ("SP_ERR_WF_NOT_SORTED", W::NotSorted),
+        ("SP_ERR_WF_DUPLICATE_BANK", W::DuplicateBank),
+        ("SP_ERR_WF_SAMPLE_ORDER", W::SampleOrder),
+        ("SP_ERR_WF_UNUSED_SAMPLE", W::UnusedSample),
+        ("SP_ERR_WF_DUPLICATE_SAMPLE", W::DuplicateSample),
+    ];
+    codes.extend(waveform_errors.iter().map(|(_, v)| v.code()));
+    codes.sort();
+    codes.dedup();
+    assert_eq!(
+        codes.len(),
+        pack_errors.len() + waveform_errors.len() - 2,
+        "waveform codes are new"
+    );
+    for (name, v) in waveform_errors {
+        e += &format!("_Static_assert({name} == {}, \"{name}\");\n", v.code());
+    }
+    e += &format!(
+        "_Static_assert(sizeof(sp_key_bank) == {}, \"kb size\");\n",
+        size_of::<KeyBank>()
+    );
+    e += &format!(
+        "_Static_assert(_Alignof(sp_key_bank) == {}, \"kb align\");\n",
+        align_of::<KeyBank>()
+    );
+    for (n, o) in [
+        ("key_lo", offset_of!(KeyBank, key_lo)),
+        ("key_hi", offset_of!(KeyBank, key_hi)),
+        ("vel_lo", offset_of!(KeyBank, vel_lo)),
+        ("vel_hi", offset_of!(KeyBank, vel_hi)),
+        ("root", offset_of!(KeyBank, root)),
+        ("transpose", offset_of!(KeyBank, transpose)),
+        ("loop_mode", offset_of!(KeyBank, loop_mode)),
+        ("sample", offset_of!(KeyBank, sample)),
+        ("tune", offset_of!(KeyBank, tune)),
+        ("level", offset_of!(KeyBank, level)),
+        ("pan", offset_of!(KeyBank, pan)),
+        ("start", offset_of!(KeyBank, start)),
+        ("end", offset_of!(KeyBank, end)),
+        ("loop_start", offset_of!(KeyBank, loop_start)),
+        ("loop_end", offset_of!(KeyBank, loop_end)),
+    ] {
+        e += &format!("_Static_assert(offsetof(sp_key_bank, {n}) == {o}, \"kb.{n}\");\n");
+    }
     let ri =
         |name: &str, off: usize| format!("_Static_assert(offsetof(sp_record_info, {name}) == {off}, \"ri.{name}\");\n");
     e += &format!(
@@ -160,6 +222,9 @@ fn header_matches_library() {
         ("SP_PACK_MAX_RECORDS", pack::MAX_RECORDS),
         ("SP_PACK_MAX_CREDIT", pack::MAX_CREDIT),
         ("SP_SAMPLE_ID_BYTES", samplepack::id::ID_BYTES),
+        ("SP_WAVEFORM_MAX_BYTES", waveform::MAX_BYTES),
+        ("SP_WAVEFORM_MAX_SAMPLES", waveform::MAX_SAMPLES),
+        ("SP_WAVEFORM_MAX_BANKS", waveform::MAX_BANKS),
     ] {
         e += &format!("_Static_assert({n} == {v}, \"{n}\");\n");
     }

@@ -37,6 +37,7 @@ static uint8_t *slurp(const char *p, size_t *n) {
 }
 
 static int pack_calls(const char *pack_path, const char *pcm_path);
+static int waveform_calls(void);
 
 int main(int argc, char **argv) {
     if (argc != 4) return 2;
@@ -65,6 +66,8 @@ int main(int argc, char **argv) {
     if (sum.frames != 5 || sum.consumed != len - first || sum.total_samples != 5000 || table[0].offset != 0 || table[0].samples != 1024) return 14;
     if (sp_flac_scan(buf + first, len - first, 0, &scratch, table, 2, &sum) != SP_ERR_BUFFER_TOO_SMALL || sum.frames != 2) return 15;
     int rc = pack_calls(argv[2], argv[3]);
+    if (rc) return rc;
+    rc = waveform_calls();
     if (rc) return rc;
     printf("abi ok\n");
     return 0;
@@ -107,5 +110,35 @@ static int pack_calls(const char *pack_path, const char *pcm_path) {
     p[4096 + 40] ^= 1;  /* inside the first record's sample id: its header checksum fails */
     if (sp_pack_record(p, len, &idx[0], &ri) != SP_ERR_BAD_CHECKSUM && sp_pack_record(p, len, &idx[1], &ri) != SP_ERR_BAD_CHECKSUM) return 43;
     free(p); free(pcm);
+    return 0;
+}
+
+/* The worked example of docs/waveform.md, built from its key banks in the order given there. */
+static int waveform_calls(void) {
+    static const int16_t pcm[4] = { 0, 1, -1, 32767 };
+    uint8_t ids[2][32], id[32]; char hex[65];
+    if (sp_sample_id_pcm(44100, 1, pcm, 4, ids[0]) != SP_OK || sp_sample_id_pcm(48000, 1, pcm, 4, ids[1]) != SP_OK) return 50;
+    sp_key_bank b[3] = {
+        { .key_lo = 60, .key_hi = 127, .vel_lo = 1, .vel_hi = 127, .root = 72, .loop_mode = 1, .sample = 1, .tune = -1250, .level = -600, .loop_start = 100, .loop_end = 2000 },
+        { .key_hi = 59, .vel_lo = 1, .vel_hi = 127, .root = 48, .pan = -10000 },
+        { .key_hi = 59, .vel_lo = 1, .vel_hi = 127, .root = 48, .sample = 1, .pan = 10000 },
+    };
+    uint8_t out[256]; size_t n = 0, s = 0, k = 0;
+    if (sp_waveform_build(b, 3, ids, 2, out, 100, &n) != SP_ERR_BUFFER_TOO_SMALL || n != 204) return 51;
+    if (sp_waveform_build(b, 3, ids, 2, out, sizeof out, &n) != SP_OK || n != 204) return 52;
+    if (sp_waveform_check(out, n, &s, &k) != SP_OK || s != 2 || k != 3) return 53;
+    if (sp_waveform_sample(out, n, 1, id) != SP_OK || memcmp(id, ids[1], 32)) return 54;
+    if (sp_waveform_sample(out, n, 2, id) != SP_ERR_INVALID_ARGUMENT) return 55;
+    sp_key_bank got;
+    if (sp_waveform_bank(out, n, 2, &got) != SP_OK || got.key_lo != 60 || got.tune != -1250 || got.level != -600 || got.loop_end != 2000 || got.sample != 1) return 56;
+    if (sp_waveform_bank(out, n, 3, &got) != SP_ERR_INVALID_ARGUMENT) return 57;
+    if (sp_waveform_id(out, n, id) != SP_OK) return 58;
+    for (int i = 0; i < 32; i++) snprintf(hex + 2 * i, 3, "%02x", id[i]);
+    if (strcmp(hex, "0ab2c142fc10f5f50f76c044e10942059087d87d02ff9acb6fa2edb298529e3f")) return 59;
+    out[100] ^= 1;
+    if (sp_waveform_check(out, 204, &s, &k) != SP_ERR_WF_CHECKSUM || s || k) return 62;
+    b[2] = b[0];
+    if (sp_waveform_build(b, 3, ids, 2, out, sizeof out, &n) != SP_ERR_WF_DUPLICATE_BANK || n != 0) return 60;
+    if (sp_waveform_build(b, 3, ids, 2, out, sizeof out, NULL) != SP_ERR_INVALID_ARGUMENT) return 61;
     return 0;
 }

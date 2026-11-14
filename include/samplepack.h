@@ -1,7 +1,8 @@
 /* SPDX-License-Identifier: MIT */
 /*
  * samplepack: C interface to the Oscairn Sample Pack (OSP, .osp) reader and its FLAC subset
- * decoder. docs/format.md is the format specification.
+ * decoder, and to Oscairn Waveform (.owf) files. docs/format.md and docs/waveform.md are the
+ * format specifications.
  *
  * Conventions
  *  - Every function returns a status: 0 (SP_OK) or a positive sp_status code. No function
@@ -70,7 +71,26 @@ typedef enum sp_status {
     SP_ERR_ID_MISMATCH = 55,         /* sample id of the decoded audio differs */
     SP_ERR_TRAILER_MISMATCH = 56,    /* live set rebuilt from the records differs from the trailer */
     SP_ERR_NOT_RECORD = 57,          /* the entry is not a record */
-    SP_ERR_RECOVER_LIMIT = 58        /* sp_pack_recover reached its bound on work: damaged, not torn */
+    SP_ERR_RECOVER_LIMIT = 58,       /* sp_pack_recover reached its bound on work: damaged, not torn */
+    /* waveforms (docs/waveform.md, "Refusals") */
+    SP_ERR_NOT_WAVEFORM = 64,         /* no OPWF magic */
+    SP_ERR_WF_VERSION = 65,           /* version other than 1 */
+    SP_ERR_WF_FLAGS = 66,             /* flags not 0 */
+    SP_ERR_WF_LENGTH = 67,            /* length not 20 + 32 S + 40 K, or over SP_WAVEFORM_MAX_BYTES */
+    SP_ERR_WF_SIZE = 68,              /* size field differs from the length */
+    SP_ERR_WF_CHECKSUM = 69,          /* CRC-32C of the body mismatch */
+    SP_ERR_WF_SAMPLE_COUNT = 70,      /* S outside 1 to SP_WAVEFORM_MAX_SAMPLES */
+    SP_ERR_WF_BANK_COUNT = 71,        /* K outside 1 to SP_WAVEFORM_MAX_BANKS */
+    SP_ERR_WF_RESERVED = 72,          /* reserved byte of a key bank not 0 */
+    SP_ERR_WF_RANGE = 73,             /* key bank field outside its range */
+    SP_ERR_WF_LOW_ABOVE_HIGH = 74,    /* lowest key or velocity above the highest */
+    SP_ERR_WF_SAMPLE_INDEX = 75,      /* sample index of S or more */
+    SP_ERR_WF_LOOP = 76,              /* loop points without a loop, or out of order */
+    SP_ERR_WF_NOT_SORTED = 77,        /* key banks not in canonical order */
+    SP_ERR_WF_DUPLICATE_BANK = 78,    /* two equal key banks */
+    SP_ERR_WF_SAMPLE_ORDER = 79,      /* sample ids not in order of first use */
+    SP_ERR_WF_UNUSED_SAMPLE = 80,     /* a sample id no key bank uses */
+    SP_ERR_WF_DUPLICATE_SAMPLE = 81   /* one sample id listed twice */
 } sp_status;
 
 /* Flag for sp_flac_decode_frame and sp_flac_scan: verify the header CRC-8 and the frame CRC-16. */
@@ -250,6 +270,55 @@ sp_status sp_record_verify(const uint8_t *data, size_t len, const sp_index_entry
  * trailer, and sp_record_verify on every live record. table: one slot per record and tombstone. */
 sp_status sp_pack_verify(const uint8_t *data, size_t len, sp_verify_scratch *scratch,
                          sp_index_entry *table, size_t capacity);
+
+/* ---------------------------------------------------------------------------------------------
+ * Waveforms (docs/waveform.md): which sample sounds for which keys and velocities, and how. A
+ * waveform file is valid only in canonical form; its id is a SHA-256 of its body. These calls are
+ * independent of the pack calls above.
+ */
+
+#define SP_WAVEFORM_MAX_BYTES 73748 /* largest file */
+#define SP_WAVEFORM_MAX_SAMPLES 1024
+#define SP_WAVEFORM_MAX_BANKS 1024
+
+/* One key bank. Same field offsets as in the file (40 bytes; the gaps are its reserved bytes). */
+typedef struct sp_key_bank {
+    uint8_t key_lo, key_hi;          /* 0..127, key_lo <= key_hi */
+    uint8_t vel_lo, vel_hi;          /* 1..127, vel_lo <= vel_hi */
+    uint8_t root;                    /* 0..127: the key at which the sample plays at its own rate */
+    int8_t transpose;                /* semitones, -127..127 */
+    uint8_t loop_mode;               /* 0 none, 1 forward */
+    uint16_t sample;                 /* index into the sample ids */
+    int32_t tune;                    /* 1/100 cent, within +-1,200,000 */
+    int32_t level;                   /* 1/100 dB, -14,400..4,800 */
+    int16_t pan;                     /* 1/100 of -100..100, within +-10,000 */
+    uint32_t start, end;             /* frames; end exclusive, 0 for the end of the sample */
+    uint32_t loop_start, loop_end;   /* frames, loop_end exclusive; both 0 without a loop */
+} sp_key_bank;
+
+/* Check a waveform file against every rule of the specification; *samples and *banks receive
+ * S and K (0 on failure). */
+sp_status sp_waveform_check(const uint8_t *data, size_t len, size_t *samples, size_t *banks);
+
+/* Sample id i (< S) and key bank i (< K, in canonical order) of a file that has passed
+ * sp_waveform_check. Only the header and the length are checked again (constant time); an index
+ * out of range is SP_ERR_INVALID_ARGUMENT. */
+sp_status sp_waveform_sample(const uint8_t *data, size_t len, size_t i, uint8_t id[SP_SAMPLE_ID_BYTES]);
+sp_status sp_waveform_bank(const uint8_t *data, size_t len, size_t i, sp_key_bank *bank);
+
+/* The waveform id (after the checks of sp_waveform_check). A reader given a waveform under an id
+ * compares it with this and refuses a mismatch. */
+sp_status sp_waveform_id(const uint8_t *data, size_t len, uint8_t id[SP_SAMPLE_ID_BYTES]);
+
+/* Write the canonical file for banks[0..count), whose `sample` fields index ids[0..id_count)
+ * (any order; duplicates and unused ids are allowed), into out[0..capacity). The banks are
+ * sorted and the ids put in order of first use in out; the inputs are not changed. *written is
+ * the file's length, or the length needed with SP_ERR_BUFFER_TOO_SMALL; 20 + 72 x count bytes
+ * are always enough. Equal banks give SP_ERR_WF_DUPLICATE_BANK, a field out of range its
+ * SP_ERR_WF_* code; out[0..capacity) is unspecified after an error. out must not overlap the
+ * inputs. */
+sp_status sp_waveform_build(const sp_key_bank *banks, size_t count, const uint8_t (*ids)[SP_SAMPLE_ID_BYTES],
+                            size_t id_count, uint8_t *out, size_t capacity, size_t *written);
 
 #ifdef __cplusplus
 }

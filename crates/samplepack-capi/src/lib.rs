@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-//! C interface to the `samplepack` crate (FLAC subset decoder and Oscairn Sample Pack reader). The matching header is `include/samplepack.h`; it is
+//! C interface to the `samplepack` crate (FLAC subset decoder, Oscairn Sample Pack reader, waveform files). The matching header is `include/samplepack.h`; it is
 //! written by hand and checked against this file by `tests/c_abi.rs`.
 //!
 //! This is the only place with `unsafe`: turning caller-supplied pointers and lengths into
@@ -10,6 +10,7 @@ use core::mem::size_of;
 use samplepack::flac::{self, Error, FrameEntry, FrameInfo, Scratch};
 use samplepack::id::{IdHasher, SampleId};
 use samplepack::pack::{self, IndexEntry, Pack, Record, RecordInfo, VerifyScratch};
+use samplepack::waveform::{self, KeyBank, Waveform};
 
 /// The decoder never panics. If a panic is reached anyway, abort the process (no unwinding
 /// across the C boundary). With the `link-fail-on-panic` feature the handler instead calls a
@@ -72,11 +73,11 @@ unsafe fn output<'a, T>(p: *mut T, cap: usize, max: usize) -> Result<&'a mut [T]
     Ok(unsafe { core::slice::from_raw_parts_mut(p, cap) })
 }
 
-fn overlaps<T>(a: &[T], b: &[T]) -> bool {
+fn overlaps<A, B>(a: &[A], b: &[B]) -> bool {
     let (a0, b0) = (a.as_ptr() as usize, b.as_ptr() as usize);
     let (a1, b1) = (
-        a0.wrapping_add(a.len().wrapping_mul(size_of::<T>())),
-        b0.wrapping_add(b.len().wrapping_mul(size_of::<T>())),
+        a0.wrapping_add(a.len().wrapping_mul(size_of::<A>())),
+        b0.wrapping_add(b.len().wrapping_mul(size_of::<B>())),
     );
     !a.is_empty() && !b.is_empty() && a0 < b1 && b0 < a1
 }
@@ -626,4 +627,121 @@ pub unsafe extern "C" fn sp_pack_verify(
         pack::verify_pack(&p, verify_scratch(vs)?, t).map(|_| ())
     };
     pcode(run())
+}
+
+// ---------------------------------------------------------------------------------------------
+// Waveforms (docs/waveform.md).
+
+fn wcode(r: Result<(), waveform::Error>) -> i32 {
+    match r {
+        Ok(()) => OK,
+        Err(e) => e.code(),
+    }
+}
+
+/// A bad pointer or argument, as a waveform error.
+fn arg<T, E>(r: Result<T, E>) -> Result<T, waveform::Error> {
+    r.map_err(|_| waveform::Error::InvalidArgument)
+}
+
+/// Checks a waveform file in full and gives its counts; see `samplepack.h`.
+///
+/// # Safety
+/// Pointers must be valid as documented in the header.
+#[no_mangle]
+pub unsafe extern "C" fn sp_waveform_check(data: *const u8, len: usize, samples: *mut usize, banks: *mut usize) -> i32 {
+    // SAFETY: forwarded caller contract.
+    let run = || unsafe {
+        let (s, k) = (arg(out_ref(samples))?, arg(out_ref(banks))?);
+        (*s, *k) = (0, 0);
+        let w = Waveform::parse(arg(input(data, len))?)?;
+        (*s, *k) = (w.samples().len(), w.banks());
+        Ok(())
+    };
+    wcode(run())
+}
+
+/// Sample id `i` of a checked waveform file; see `samplepack.h`.
+///
+/// # Safety
+/// Pointers must be valid as documented in the header.
+#[no_mangle]
+pub unsafe extern "C" fn sp_waveform_sample(data: *const u8, len: usize, i: usize, id: *mut SampleId) -> i32 {
+    // SAFETY: forwarded caller contract.
+    let run = || unsafe {
+        let out = arg(out_ref(id))?;
+        *out = [0; 32];
+        let w = Waveform::reopen(arg(input(data, len))?)?;
+        *out = *w.samples().get(i).ok_or(waveform::Error::InvalidArgument)?;
+        Ok(())
+    };
+    wcode(run())
+}
+
+/// Key bank `i` of a checked waveform file; see `samplepack.h`.
+///
+/// # Safety
+/// Pointers must be valid as documented in the header.
+#[no_mangle]
+pub unsafe extern "C" fn sp_waveform_bank(data: *const u8, len: usize, i: usize, bank: *mut KeyBank) -> i32 {
+    // SAFETY: forwarded caller contract.
+    let run = || unsafe {
+        let out = arg(out_ref(bank))?;
+        *out = KeyBank::default();
+        let w = Waveform::reopen(arg(input(data, len))?)?;
+        *out = w.bank(i).ok_or(waveform::Error::InvalidArgument)?;
+        Ok(())
+    };
+    wcode(run())
+}
+
+/// Checks a waveform file in full and computes its id; see `samplepack.h`.
+///
+/// # Safety
+/// Pointers must be valid as documented in the header.
+#[no_mangle]
+pub unsafe extern "C" fn sp_waveform_id(data: *const u8, len: usize, id: *mut SampleId) -> i32 {
+    // SAFETY: forwarded caller contract.
+    let run = || unsafe {
+        let out = arg(out_ref(id))?;
+        *out = [0; 32];
+        *out = Waveform::parse(arg(input(data, len))?)?.id();
+        Ok(())
+    };
+    wcode(run())
+}
+
+/// Writes the canonical file for a list of key banks; see `samplepack.h`.
+///
+/// # Safety
+/// Pointers must be valid as documented in the header.
+#[no_mangle]
+pub unsafe extern "C" fn sp_waveform_build(
+    banks: *const KeyBank,
+    count: usize,
+    ids: *const SampleId,
+    id_count: usize,
+    out: *mut u8,
+    capacity: usize,
+    written: *mut usize,
+) -> i32 {
+    // SAFETY: forwarded caller contract.
+    let run = || unsafe {
+        let n = arg(out_ref(written))?;
+        *n = 0;
+        let (b, i) = (arg(in_slice(banks, count))?, arg(in_slice(ids, id_count))?);
+        let o = arg(output(out, capacity, usize::MAX))?;
+        if overlaps(o, b) || overlaps(o, i) {
+            return Err(waveform::Error::InvalidArgument);
+        }
+        *n = match waveform::build(b, i, o) {
+            Err(waveform::Error::BufferTooSmall) => {
+                *n = waveform::file_len(b, i)?;
+                return Err(waveform::Error::BufferTooSmall);
+            }
+            r => r?,
+        };
+        Ok(())
+    };
+    wcode(run())
 }

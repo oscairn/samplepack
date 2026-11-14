@@ -38,6 +38,12 @@ int main(void) {
     st += sp_record_sample_id(d, sizeof d, ix, &v, id);
     st += sp_record_verify(d, sizeof d, ix, &v);
     st += sp_pack_verify(d, sizeof d, &v, ix, 4);
+    sp_key_bank kb[2] = {{0}}; uint8_t ids[2][32] = {{0}};
+    st += sp_waveform_build(kb, 2, ids, 2, d, sizeof d, &n);
+    st += sp_waveform_check(d, sizeof d, &n, &n);
+    st += sp_waveform_sample(d, sizeof d, 0, id);
+    st += sp_waveform_bank(d, sizeof d, 0, kb);
+    st += sp_waveform_id(d, sizeof d, id);
     printf("%d\n", st); return 0;
 }
 EOC
