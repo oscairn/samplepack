@@ -88,6 +88,10 @@ fn header_matches_library() {
         ("SP_ERR_INVALID_ARGUMENT", P::InvalidArgument),
         ("SP_ERR_BUFFER_TOO_SMALL", P::BufferTooSmall),
     ];
+    let mut codes: Vec<i32> = pack_errors.iter().map(|(_, v)| v.code()).collect();
+    codes.sort();
+    codes.dedup();
+    assert_eq!(codes.len(), pack_errors.len(), "pack error codes are distinct");
     for (name, v) in pack_errors {
         e += &format!("_Static_assert({name} == {}, \"{name}\");\n", v.code());
     }

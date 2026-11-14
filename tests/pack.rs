@@ -550,41 +550,6 @@ fn every_rejection_reason() {
         r.decode(0, 2, 0, &mut s, &mut l[..2047], &mut rr),
         Err(Error::BufferTooSmall)
     );
-    // codes are distinct
-    let mut codes: Vec<i32> = [
-        Error::NotPack,
-        Error::UnsupportedVersion,
-        Error::NoFooter,
-        Error::TooLarge,
-        Error::BadChecksum,
-        Error::BadEntry,
-        Error::BadFooter,
-        Error::BadTrailer,
-        Error::BadOffset,
-        Error::Overlap,
-        Error::ReservedNonZero,
-        Error::BadFormat,
-        Error::BadLayout,
-        Error::BadFrameTable,
-        Error::BadCredit,
-        Error::DuplicateId,
-        Error::NotLive,
-        Error::Mismatch,
-        Error::NotFound,
-        Error::FrameMismatch,
-        Error::Padding,
-        Error::WindowMismatch,
-        Error::Md5Mismatch,
-        Error::IdMismatch,
-        Error::TrailerMismatch,
-        Error::NotRecord,
-    ]
-    .iter()
-    .map(|e| e.code())
-    .collect();
-    codes.sort();
-    codes.dedup();
-    assert_eq!(codes.len(), 26);
 }
 
 #[test]
