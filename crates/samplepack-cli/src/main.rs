@@ -124,28 +124,7 @@ fn cmd_pack(args: &[String]) -> Result<(), String> {
     // Inputs are encoded in parallel; results are used in input order, so output does not depend
     // on the thread count.
     let encode_one = |input: &str, vs: &mut VerifyScratch| -> Encoded {
-        let a = audio::read_audio(Path::new(input))?;
-        let id = sample_id(a.rate, a.channels as u8, &a.pcm);
-        let frames = (a.pcm.len() / a.channels) as u32;
-        let (data, table) = encode::encode(&a.pcm, a.channels, a.rate, BLOCK);
-        let p = RecordParams {
-            rate: a.rate,
-            channels: a.channels as u8,
-            frames,
-            block_size: BLOCK as u32,
-            window,
-            credit,
-            table: &table,
-            frame_data: &data,
-        };
-        let mut rec = vec![0u8; pack::record_len(&p).map_err(|e| format!("{input}: {}", err(e)))?];
-        let info = pack::write_record(&p, vs, &mut rec).map_err(|e| format!("{input}: {}", err(e)))?;
-        // The record's id is computed from its decoded frames; equality with the id of the input
-        // samples shows the stored audio decodes bit-exactly to the input.
-        if info.id != id {
-            return Err(format!("{input}: encoded audio does not decode to the input"));
-        }
-        Ok((id, rec))
+        encode_record(&audio::read_audio(Path::new(input))?, input, window, credit, vs)
     };
     let threads = std::thread::available_parallelism()
         .map_or(1, |n| n.get())
@@ -194,6 +173,33 @@ fn cmd_pack(args: &[String]) -> Result<(), String> {
     };
     println!("{out}: {} records written, {len} bytes", records.len());
     Ok(())
+}
+
+/// Encodes audio into a record; the record's id, computed from its decoded frames, must equal the
+/// id of the input samples, which shows the stored audio decodes bit-exactly to the input.
+fn encode_record(a: &audio::Audio, input: &str, window: u32, credit: &str, vs: &mut VerifyScratch) -> Encoded {
+    if a.pcm.is_empty() {
+        return Err(format!("{input}: no audio"));
+    }
+    let id = sample_id(a.rate, a.channels as u8, &a.pcm);
+    let frames = (a.pcm.len() / a.channels) as u32;
+    let (data, table) = encode::encode(&a.pcm, a.channels, a.rate, BLOCK);
+    let p = RecordParams {
+        rate: a.rate,
+        channels: a.channels as u8,
+        frames,
+        block_size: BLOCK as u32,
+        window,
+        credit,
+        table: &table,
+        frame_data: &data,
+    };
+    let mut rec = vec![0u8; pack::record_len(&p).map_err(|e| format!("{input}: {}", err(e)))?];
+    let info = pack::write_record(&p, vs, &mut rec).map_err(|e| format!("{input}: {}", err(e)))?;
+    if info.id != id {
+        return Err(format!("{input}: encoded audio does not decode to the input"));
+    }
+    Ok((id, rec))
 }
 
 fn cmd_list(args: &[String]) -> Result<(), String> {

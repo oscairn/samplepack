@@ -38,49 +38,51 @@ fn check(rate: u32, channels: usize, bits: u32, what: &str) -> Result<(), String
     Ok(())
 }
 
+/// The body of the first chunk `id` of a RIFF/WAVE file, if it has one.
+pub fn wav_chunk<'a>(d: &'a [u8], id: &[u8; 4], what: &str) -> Result<Option<&'a [u8]>, String> {
+    let mut pos = 12usize;
+    while let Some(len) = u32le(d, pos + 4) {
+        let (body, len) = (pos + 8, len as usize);
+        if d.get(pos..pos + 4) == Some(id) {
+            let name = String::from_utf8_lossy(id);
+            return d
+                .get(body..body + len)
+                .map(Some)
+                .ok_or_else(|| format!("{what}: {name} chunk truncated"));
+        }
+        pos = body + len + (len & 1);
+    }
+    Ok(None)
+}
+
 /// Reads a RIFF/WAVE file of 16-bit PCM (format 1, or extensible with the PCM subformat).
 pub fn read_wav(d: &[u8], what: &str) -> Result<Audio, String> {
     let bad = || format!("{what}: not a 16-bit PCM WAV file");
     if d.get(..4) != Some(b"RIFF") || d.get(8..12) != Some(b"WAVE") {
         return Err(bad());
     }
-    let mut pos = 12usize;
-    let mut fmt: Option<(u16, usize, u32, u32)> = None;
-    while let Some(len) = u32le(d, pos + 4) {
-        let id = d.get(pos..pos + 4).ok_or_else(bad)?;
-        let body = pos + 8;
-        let len = len as usize;
-        if id == b"fmt " {
-            let mut tag = u16le(d, body).ok_or_else(bad)?;
-            let ch = usize::from(u16le(d, body + 2).ok_or_else(bad)?);
-            let rate = u32le(d, body + 4).ok_or_else(bad)?;
-            let bits = u32::from(u16le(d, body + 14).ok_or_else(bad)?);
-            if tag == 0xFFFE {
-                tag = u16le(d, body + 24).ok_or_else(bad)?;
-            }
-            fmt = Some((tag, ch, rate, bits));
-        } else if id == b"data" {
-            let (tag, ch, rate, bits) = fmt.ok_or_else(bad)?;
-            if tag != 1 {
-                return Err(bad());
-            }
-            check(rate, ch, bits, what)?;
-            let data = d
-                .get(body..body + len)
-                .ok_or_else(|| format!("{what}: data chunk truncated"))?;
-            if data.len() % (2 * ch) != 0 {
-                return Err(format!("{what}: data chunk is not whole frames"));
-            }
-            let pcm = data.chunks_exact(2).map(|b| i16::from_le_bytes([b[0], b[1]])).collect();
-            return Ok(Audio {
-                rate,
-                channels: ch,
-                pcm,
-            });
-        }
-        pos = body + len + (len & 1);
+    let fmt = wav_chunk(d, b"fmt ", what)?.ok_or_else(bad)?;
+    let mut tag = u16le(fmt, 0).ok_or_else(bad)?;
+    let ch = usize::from(u16le(fmt, 2).ok_or_else(bad)?);
+    let rate = u32le(fmt, 4).ok_or_else(bad)?;
+    let bits = u32::from(u16le(fmt, 14).ok_or_else(bad)?);
+    if tag == 0xFFFE {
+        tag = u16le(fmt, 24).ok_or_else(bad)?;
     }
-    Err(bad())
+    if tag != 1 {
+        return Err(bad());
+    }
+    check(rate, ch, bits, what)?;
+    let data = wav_chunk(d, b"data", what)?.ok_or_else(bad)?;
+    if data.len() % (2 * ch) != 0 {
+        return Err(format!("{what}: data chunk is not whole frames"));
+    }
+    let pcm = data.chunks_exact(2).map(|b| i16::from_le_bytes([b[0], b[1]])).collect();
+    Ok(Audio {
+        rate,
+        channels: ch,
+        pcm,
+    })
 }
 
 /// Reads a FLAC file. Frames inside the reader's subset are decoded by the library; anything else
@@ -158,15 +160,11 @@ pub fn read_flac(path: &Path, d: &[u8], what: &str) -> Result<Audio, String> {
 pub fn read_audio(path: &Path) -> Result<Audio, String> {
     let what = path.display().to_string();
     let d = std::fs::read(path).map_err(|e| format!("{what}: {e}"))?;
-    let a = if d.starts_with(b"fLaC") {
-        read_flac(path, &d, &what)?
+    if d.starts_with(b"fLaC") {
+        read_flac(path, &d, &what)
     } else {
-        read_wav(&d, &what)?
-    };
-    if a.pcm.is_empty() {
-        return Err(format!("{what}: no audio"));
+        read_wav(&d, &what)
     }
-    Ok(a)
 }
 
 /// A standard FLAC file of a record: STREAMINFO (with the record's MD5) and its frames, copied.
