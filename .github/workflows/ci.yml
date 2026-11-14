@@ -43,6 +43,6 @@ jobs:
       - name: No panic paths in the static library
         if: matrix.unix
         run: sh tools/check-no-panic.sh
-      - name: Differential run against the C oracle
+      - name: Fuzz runs (decoder against the C oracle, pack reader)
         if: matrix.unix
         run: sh tools/run-fuzz.sh 50000 1
