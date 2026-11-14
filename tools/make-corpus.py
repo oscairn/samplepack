@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-License-Identifier: MIT
 """Generate the synthetic test corpus: tests/data/*.flac (stock `flac` encoder) and the matching
 tests/data/*.pcm (what `flac -d` decodes them to: interleaved signed 16-bit little endian).
 

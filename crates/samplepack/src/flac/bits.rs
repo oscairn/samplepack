@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 //! MSB-first bit reader over a byte slice.
 //!
 //! Reads are bounded by the end of the slice: bytes past the end read as zero, and the reader

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // fsd: decoder for a restricted FLAC subset (study code). Kept here as the test oracle for the Rust decoder;
 // the only change is the FSD_STRICT_UTF8 block below, off unless defined. Standard FLAC frames, but only:
 // 1-2 channels, 16-bit, block size <= FSD_MAXB, CONSTANT / VERBATIM / FIXED (order 0-4) /

@@ -1,5 +1,5 @@
 #!/bin/sh
-# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-License-Identifier: MIT
 # Runs inside the aarch64 container (see gate.sh): /w is the repository (read-only), /o the gate output directory.
 set -e
 cd /tmp

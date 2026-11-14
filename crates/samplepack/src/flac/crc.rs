@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 //! CRC-8 (polynomial 0x07) and CRC-16 (polynomial 0x8005), both zero-initialised and
 //! non-reflected, as used by FLAC frame headers and frames.
 

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 //! Subframes: constant, verbatim, fixed predictors (order 0..=4) and LPC (order 1..=8), with
 //! Rice / Rice2 residuals. All arithmetic on sample values wraps in 32 bits (64 bits for wide
 //! LPC sums), so malformed streams give defined, reproducible output.

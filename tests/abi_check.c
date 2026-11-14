@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: AGPL-3.0-or-later */
+/* SPDX-License-Identifier: MIT */
 /* Built and run by tests/c_abi.rs against the static library: checks that include/samplepack.h
  * agrees with the Rust definitions (EXPECT_* values come from the Rust types), then makes a few calls. */
 #include <stdio.h>

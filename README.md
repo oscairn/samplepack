@@ -23,4 +23,4 @@ sh tools/run-fuzz.sh 200000
 
 ## Licence
 
-AGPL-3.0-or-later, see `LICENSE`. Source files start with an SPDX line.
+MIT, see `LICENSE`. Source files start with an SPDX line.

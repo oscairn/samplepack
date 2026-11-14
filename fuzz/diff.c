@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // Differential harness: the Rust decoder (through the C interface) against the C oracle.
 //
 //   diff files F...             decode every frame of every .flac with both, compare samples

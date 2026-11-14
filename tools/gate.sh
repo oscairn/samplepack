@@ -1,5 +1,5 @@
 #!/bin/sh
-# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-License-Identifier: MIT
 # Instruction-count gate on aarch64: callgrind Ir per decoded sample, Rust library vs the C oracle,
 # on the same streams. The Rust static library is cross-compiled on the host for
 # aarch64-unknown-linux-gnu (no linker needed for a staticlib); the bench is linked and run in a

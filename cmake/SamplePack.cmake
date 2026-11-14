@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-License-Identifier: MIT
 #
 # Builds the samplepack static library with cargo for the active target and exposes it as the
 # imported target samplepack::samplepack (include directory: include/, header: samplepack.h).

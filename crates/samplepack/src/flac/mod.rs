@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 //! Decoder for a restricted subset of standard FLAC frames. See `docs/decoder.md` for the exact
 //! subset and every rejection reason.
 

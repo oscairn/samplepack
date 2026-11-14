@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 //! Builds the static library, compiles `abi_check.c` against `include/samplepack.h` and the
 //! library, and runs it. Struct sizes, offsets and enum values in the header are compared with
 //! the Rust definitions; the C file also calls the interface.

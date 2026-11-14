@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 //! C interface to the `samplepack` crate. The matching header is `include/samplepack.h`; it is
 //! written by hand and checked against this file by `crates/samplepack-capi/tests`.
 //!

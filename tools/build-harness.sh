@@ -1,5 +1,5 @@
 #!/bin/sh
-# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-License-Identifier: MIT
 # Build the differential harness into out/: sh tools/build-harness.sh [extra cc flags, e.g. -fsanitize=address,undefined]
 # Environment: CC (default cc), HARNESS_STRICT=0 to build against the unmodified oracle.
 set -e

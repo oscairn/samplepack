@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 // Decode-cost bench for callgrind: decodes every frame of every file given, with the Rust library
 // (rust) or the C oracle (oracle), in a function callgrind can toggle on.
 //   bench rust|oracle crc|nocrc f1.flac ...        prints the number of samples decoded

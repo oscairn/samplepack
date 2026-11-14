@@ -1,5 +1,5 @@
 #!/bin/sh
-# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-License-Identifier: MIT
 # Panic-freedom checks on the release static library:
 #  1. no panic/bounds-check/unwrap machinery in the archive's symbol table;
 #  2. a build whose panic handler calls a non-existent symbol still links into a program, because

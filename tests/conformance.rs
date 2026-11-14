@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: MIT
 //! Decodes the corpus in `tests/data` (stock-encoder FLAC files and what `flac -d` made of them)
 //! and checks sample-for-sample equality, frame tables, rejections and buffer handling.
 
