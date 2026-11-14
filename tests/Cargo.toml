@@ -1,0 +1,19 @@
+[package]
+name = "samplepack-tests"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+autotests = false
+
+[dependencies]
+samplepack = { path = "../crates/samplepack" }
+
+[[test]]
+name = "conformance"
+path = "conformance.rs"
+
+[lib]
+path = "lib.rs"
+test = false
+doctest = false
