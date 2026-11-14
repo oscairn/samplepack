@@ -188,6 +188,9 @@ int main(int argc, char **argv) {
         printf("cases %ld (rust ok %ld, rust rejected %ld, scan checks %ld) divergences %ld\n", cases, ok_cases, fail_cases, scan_cases, div);
         static const char *nm[] = { "ok", "invalid_argument", "buffer_too_small", "truncated", "bad_sync", "reserved_value", "unsupported", "header_crc", "bad_subframe", "bad_residual", "overrun", "frame_crc", "bad_stream" };
         for (int i = 0; i < 13; i++) printf("  %-17s %ld\n", nm[i], histo[i]);
+        free(buf);
+        for (size_t i = 0; i < nframes; i++) free(frames[i].d);
+        free(frames);
         return div != 0;
     }
     fprintf(stderr, "usage: diff files F... | diff fuzz N SEED F...\n");
