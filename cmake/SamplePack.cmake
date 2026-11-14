@@ -71,6 +71,16 @@ string(ASCII 31 _sp_us)
 set(_sp_flags "--remap-path-prefix" "${_sp_root}=/samplepack" "--remap-path-prefix" "${CMAKE_BINARY_DIR}=/build")
 list(APPEND _sp_flags ${SAMPLEPACK_RUSTFLAGS})
 string(REPLACE ";" "${_sp_us}" _sp_encoded "${_sp_flags}")
+set(_sp_flags_env "CARGO_ENCODED_RUSTFLAGS=${_sp_encoded}")
+if(CMAKE_GENERATOR MATCHES "Visual Studio")
+  # A project file cannot hold 0x1f, so these generators get space-separated RUSTFLAGS.
+  # shortcut: no spaces in the source or build path with Visual Studio generators; run cargo from a script file to lift it.
+  if("${_sp_flags}" MATCHES " ")
+    message(FATAL_ERROR "SamplePack: with a Visual Studio generator the source and build paths may not contain spaces")
+  endif()
+  string(REPLACE ";" " " _sp_spaced "${_sp_flags}")
+  set(_sp_flags_env "RUSTFLAGS=${_sp_spaced}")
+endif()
 
 # The cargo step runs on every build and cargo decides what is stale (it tracks every source file,
 # Cargo.toml, Cargo.lock and the toolchain; a no-op check takes well under a second). Cargo leaves
@@ -81,7 +91,7 @@ foreach(t IN LISTS _sp_triples)
   set(_dir "${CMAKE_BINARY_DIR}/samplepack-cargo/${t}")
   list(APPEND _sp_built "${_dir}/${t}/release/${_sp_libname}")
   list(APPEND _sp_cmds
-    COMMAND ${CMAKE_COMMAND} -E env "CARGO_ENCODED_RUSTFLAGS=${_sp_encoded}"
+    COMMAND ${CMAKE_COMMAND} -E env "${_sp_flags_env}"
             ${SAMPLEPACK_CARGO} build --release --locked --offline -p samplepack-capi
             --target "${t}" --target-dir "${_dir}")
 endforeach()
