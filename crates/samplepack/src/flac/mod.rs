@@ -118,9 +118,41 @@ struct Header {
     body: usize,
 }
 
-const BLOCK_SIZES: [u16; 16] = [
+/// Block sizes of the frame-header block-size codes (index = code; 0: not a table value).
+pub const BLOCK_SIZES: [u16; 16] = [
     0, 192, 576, 1152, 2304, 4608, 0, 0, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768,
 ];
+/// Sample rates of the frame-header sample-rate codes 1 to 11 (index = code; code 0 means "from
+/// STREAMINFO").
+pub const SAMPLE_RATES: [u32; 12] = [
+    0, 88200, 176400, 192000, 8000, 16000, 22050, 24000, 32000, 44100, 48000, 96000,
+];
+
+/// Writes the frame number `v` in FLAC's UTF-8-like coding (shortest form) into `out`; returns
+/// its length.
+pub fn coded_number(v: u32, out: &mut [u8; 7]) -> usize {
+    if v < 0x80 {
+        out[0] = v as u8;
+        return 1;
+    }
+    let n: usize = match v {
+        0..=0x7FF => 2,
+        0x800..=0xFFFF => 3,
+        0x1_0000..=0x1F_FFFF => 4,
+        0x20_0000..=0x3FF_FFFF => 5,
+        _ => 6,
+    };
+    let lead = [0u8, 0, 0xC0, 0xE0, 0xF0, 0xF8, 0xFC];
+    let mut x = v;
+    for i in (1..n).rev() {
+        if let Some(o) = out.get_mut(i) {
+            *o = 0x80 | (x & 0x3F) as u8;
+        }
+        x >>= 6;
+    }
+    out[0] = lead.get(n).copied().unwrap_or(0) | x as u8;
+    n
+}
 
 fn parse_header(d: &[u8], check_crc: bool) -> Result<Header, Error> {
     let [b0, b1, b2, b3, b4, _] = *d.first_chunk::<6>().ok_or(Error::Truncated)?;

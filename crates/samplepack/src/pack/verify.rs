@@ -36,10 +36,6 @@ impl Default for VerifyScratch {
     }
 }
 
-const RATES: [u32; 12] = [
-    0, 88200, 176400, 192000, 8000, 16000, 22050, 24000, 32000, 44100, 48000, 96000,
-];
-
 /// Checks the parts of a frame header the decoder does not: fixed blocking strategy, the coded
 /// frame number equal to `index` in its shortest form, and a coded sample rate equal to `rate`.
 /// The frame has already decoded, so its header is well formed.
@@ -51,7 +47,7 @@ pub(crate) fn check_frame_header(frame: &[u8], index: u32, rate: u32) -> Result<
         return Err(bad);
     }
     let mut num = [0u8; 7];
-    let n = utf8_number(index, &mut num);
+    let n = flac::coded_number(index, &mut num);
     if frame.get(4..4usize.wrapping_add(n)) != num.get(..n) {
         return Err(bad);
     }
@@ -64,7 +60,7 @@ pub(crate) fn check_frame_header(frame: &[u8], index: u32, rate: u32) -> Result<
     let at = |i: usize| u32::from(frame.get(pos.wrapping_add(i)).copied().unwrap_or(0));
     let coded = match b2 & 15 {
         0 => rate,
-        c @ 1..=11 => RATES.get(usize::from(c)).copied().unwrap_or(0),
+        c @ 1..=11 => flac::SAMPLE_RATES.get(usize::from(c)).copied().unwrap_or(0),
         12 => at(0).wrapping_mul(1000),
         13 => (at(0) << 8) | at(1),
         _ => ((at(0) << 8) | at(1)).wrapping_mul(10),
@@ -73,31 +69,6 @@ pub(crate) fn check_frame_header(frame: &[u8], index: u32, rate: u32) -> Result<
         return Err(bad);
     }
     Ok(())
-}
-
-/// The frame number `v` in FLAC's UTF-8-like coding (shortest form); returns its length.
-pub(crate) fn utf8_number(v: u32, out: &mut [u8; 7]) -> usize {
-    if v < 0x80 {
-        out[0] = v as u8;
-        return 1;
-    }
-    let n: usize = match v {
-        0..=0x7FF => 2,
-        0x800..=0xFFFF => 3,
-        0x1_0000..=0x1F_FFFF => 4,
-        0x20_0000..=0x3FF_FFFF => 5,
-        _ => 6,
-    };
-    let lead = [0u8, 0, 0xC0, 0xE0, 0xF0, 0xF8, 0xFC];
-    let mut x = v;
-    for i in (1..n).rev() {
-        if let Some(o) = out.get_mut(i) {
-            *o = 0x80 | (x & 0x3F) as u8;
-        }
-        x >>= 6;
-    }
-    out[0] = lead.get(n).copied().unwrap_or(0) | x as u8;
-    n
 }
 
 fn zero(d: &[u8]) -> bool {

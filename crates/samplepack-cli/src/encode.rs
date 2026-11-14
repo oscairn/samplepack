@@ -9,7 +9,7 @@
 //! reorders nor fuses them (no FMA contraction) and no library function (sin, cos, log, ...) is
 //! called, so the output is bit-identical on every target. Output depends only on the input.
 
-use samplepack::flac::{crc16, crc8};
+use samplepack::flac::{self, crc16, crc8};
 
 struct Bits {
     out: Vec<u8>,
@@ -340,64 +340,16 @@ fn write_subframe(w: &mut Bits, x: &[i32], bps: u32, sub: &Sub) {
     }
 }
 
-const RATE_CODES: [(u32, u8); 11] = [
-    (88200, 1),
-    (176400, 2),
-    (192000, 3),
-    (8000, 4),
-    (16000, 5),
-    (22050, 6),
-    (24000, 7),
-    (32000, 8),
-    (44100, 9),
-    (48000, 10),
-    (96000, 11),
-];
-
-fn utf8_number(v: u32) -> Vec<u8> {
-    if v < 0x80 {
-        return vec![v as u8];
-    }
-    let n = match v {
-        0..=0x7FF => 2,
-        0x800..=0xFFFF => 3,
-        0x1_0000..=0x1F_FFFF => 4,
-        0x20_0000..=0x3FF_FFFF => 5,
-        _ => 6,
-    };
-    let lead = [0u8, 0, 0xC0, 0xE0, 0xF0, 0xF8, 0xFC][n];
-    let mut out = vec![0u8; n];
-    let mut x = v;
-    for i in (1..n).rev() {
-        out[i] = 0x80 | (x & 0x3F) as u8;
-        x >>= 6;
-    }
-    out[0] = lead | x as u8;
-    out
-}
-
 /// Encodes one frame: `chans` holds 1 or 2 channels of `n` samples each.
 fn encode_frame(chans: &[Vec<i32>], rate: u32, index: u32) -> Vec<u8> {
     let n = chans[0].len();
-    let block_code: Option<u8> = match n {
-        192 => Some(1),
-        576 => Some(2),
-        1152 => Some(3),
-        2304 => Some(4),
-        256 => Some(8),
-        512 => Some(9),
-        1024 => Some(10),
-        2048 => Some(11),
-        4096 => Some(12),
-        _ => None,
-    };
-    let (bcode, bextra): (u8, Vec<u8>) = match block_code {
-        Some(c) => (c, vec![]),
+    let (bcode, bextra): (u8, Vec<u8>) = match flac::BLOCK_SIZES.iter().position(|&b| usize::from(b) == n) {
+        Some(c) => (c as u8, vec![]),
         None if n <= 256 => (6, vec![(n - 1) as u8]),
         None => (7, ((n - 1) as u16).to_be_bytes().to_vec()),
     };
-    let (rcode, rextra): (u8, Vec<u8>) = match RATE_CODES.iter().find(|(r, _)| *r == rate) {
-        Some(&(_, c)) => (c, vec![]),
+    let (rcode, rextra): (u8, Vec<u8>) = match flac::SAMPLE_RATES.iter().position(|&r| r == rate) {
+        Some(c) => (c as u8, vec![]),
         None if rate.is_multiple_of(1000) && rate / 1000 <= 255 => (12, vec![(rate / 1000) as u8]),
         None if rate <= 65535 => (13, (rate as u16).to_be_bytes().to_vec()),
         None if rate.is_multiple_of(10) && rate / 10 <= 65535 => (14, ((rate / 10) as u16).to_be_bytes().to_vec()),
@@ -431,7 +383,9 @@ fn encode_frame(chans: &[Vec<i32>], rate: u32, index: u32) -> Vec<u8> {
         (best.0, pair)
     };
     let mut head = vec![0xFF, 0xF8, (bcode << 4) | rcode, (assign << 4) | (4 << 1)];
-    head.extend(utf8_number(index));
+    let mut num = [0u8; 7];
+    let len = flac::coded_number(index, &mut num);
+    head.extend(&num[..len]);
     head.extend(bextra);
     head.extend(rextra);
     head.push(crc8(&head));
