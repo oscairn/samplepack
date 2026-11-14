@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-//! C interface to the `samplepack` crate. The matching header is `include/samplepack.h`; it is
+//! C interface to the `samplepack` crate (FLAC subset decoder and Oscairn Sample Pack reader). The matching header is `include/samplepack.h`; it is
 //! written by hand and checked against this file by `crates/samplepack-capi/tests`.
 //!
 //! This is the only place with `unsafe`: turning caller-supplied pointers and lengths into
@@ -8,6 +8,8 @@
 
 use core::mem::size_of;
 use samplepack::flac::{self, Error, FrameEntry, FrameInfo, Scratch};
+use samplepack::id::{IdHasher, SampleId};
+use samplepack::pack::{self, IndexEntry, Pack, Record, RecordInfo, VerifyScratch};
 
 /// The decoder never panics. If a panic is reached anyway, abort the process (no unwinding
 /// across the C boundary). With the `link-fail-on-panic` feature the handler instead calls a
@@ -207,4 +209,420 @@ pub unsafe extern "C" fn sp_flac_first_frame(data: *const u8, len: usize, offset
         }
         Err(e) => e as i32,
     }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Packs. Every function takes the committed pack as (data, len): normally a read-only mapping of
+// the whole file, or of its first `committed` bytes after sp_pack_recover.
+
+fn pcode(r: Result<(), pack::Error>) -> i32 {
+    match r {
+        Ok(()) => OK,
+        Err(e) => e.code(),
+    }
+}
+
+/// # Safety
+/// `p` must be null or valid for writes of one `T`.
+unsafe fn out_ref<'a, T>(p: *mut T) -> Result<&'a mut T, pack::Error> {
+    if p.is_null() || !p.is_aligned() {
+        return Err(pack::Error::InvalidArgument);
+    }
+    // SAFETY: non-null, aligned; writability is the caller's contract.
+    Ok(unsafe { &mut *p })
+}
+
+/// # Safety
+/// `p` must be null or valid for reads of one `T`.
+unsafe fn in_ref<'a, T>(p: *const T) -> Result<&'a T, pack::Error> {
+    if p.is_null() || !p.is_aligned() {
+        return Err(pack::Error::InvalidArgument);
+    }
+    // SAFETY: non-null, aligned; readability is the caller's contract.
+    Ok(unsafe { &*p })
+}
+
+/// # Safety
+/// `p` must be valid for reads of `len` bytes when `len > 0`.
+unsafe fn pack_bytes<'a>(p: *const u8, len: usize) -> Result<&'a [u8], pack::Error> {
+    // SAFETY: forwarded caller contract.
+    unsafe { input(p, len) }.map_err(|_| pack::Error::InvalidArgument)
+}
+
+/// # Safety
+/// `p` must be null or valid for reads of `n` elements.
+unsafe fn in_slice<'a, T>(p: *const T, n: usize) -> Result<&'a [T], pack::Error> {
+    if n == 0 {
+        return Ok(&[]);
+    }
+    if p.is_null() || !p.is_aligned() || n.checked_mul(size_of::<T>()).is_none_or(|b| b > isize::MAX as usize) {
+        return Err(pack::Error::InvalidArgument);
+    }
+    // SAFETY: non-null, aligned, size bounded; readability is the caller's contract.
+    Ok(unsafe { core::slice::from_raw_parts(p, n) })
+}
+
+/// Summary of an opened pack.
+#[repr(C)]
+#[derive(Default)]
+pub struct PackInfo {
+    length: u64,
+    trailer_offset: u64,
+    records: u64,
+    minor: u32,
+    reserved: u32,
+}
+
+/// Opens and checks a pack; see `samplepack.h`.
+///
+/// # Safety
+/// Pointers must be valid as documented in the header.
+#[no_mangle]
+pub unsafe extern "C" fn sp_pack_open(data: *const u8, len: usize, info: *mut PackInfo) -> i32 {
+    // SAFETY: forwarded caller contract.
+    let run = || unsafe {
+        let info = out_ref(info)?;
+        *info = PackInfo::default();
+        let p = Pack::open(pack_bytes(data, len)?)?;
+        *info = PackInfo {
+            length: p.data().len() as u64,
+            trailer_offset: p.trailer_offset() as u64,
+            records: p.records() as u64,
+            minor: u32::from(p.minor()),
+            reserved: 0,
+        };
+        Ok(())
+    };
+    pcode(run())
+}
+
+/// Committed length of a pack with a torn or uncommitted tail; see `samplepack.h`.
+///
+/// # Safety
+/// Pointers must be valid as documented in the header.
+#[no_mangle]
+pub unsafe extern "C" fn sp_pack_recover(data: *const u8, len: usize, committed: *mut u64) -> i32 {
+    // SAFETY: forwarded caller contract.
+    let run = || unsafe {
+        let c = out_ref(committed)?;
+        *c = 0;
+        *c = pack::recover(pack_bytes(data, len)?)? as u64;
+        Ok(())
+    };
+    pcode(run())
+}
+
+/// # Safety
+/// Pointers must be valid as documented in the header.
+unsafe fn index_common(
+    data: *const u8,
+    len: usize,
+    table: *mut IndexEntry,
+    capacity: usize,
+    count: *mut usize,
+    rebuild: bool,
+) -> i32 {
+    // SAFETY: forwarded caller contract.
+    let run = || unsafe {
+        let count = out_ref(count)?;
+        *count = 0;
+        let p = Pack::open(pack_bytes(data, len)?)?;
+        let t = output(table, capacity, usize::MAX).map_err(|_| pack::Error::InvalidArgument)?;
+        if rebuild {
+            match p.rebuild_index(t) {
+                Ok(n) => *count = n,
+                Err((e, need)) => {
+                    if e == pack::Error::BufferTooSmall {
+                        *count = need;
+                    }
+                    return Err(e);
+                }
+            }
+        } else {
+            if t.len() < p.records() {
+                *count = p.records();
+                return Err(pack::Error::BufferTooSmall);
+            }
+            *count = p.index(t)?;
+        }
+        Ok(())
+    };
+    pcode(run())
+}
+
+/// Builds the index from the trailer; see `samplepack.h`.
+///
+/// # Safety
+/// Pointers must be valid as documented in the header.
+#[no_mangle]
+pub unsafe extern "C" fn sp_pack_index(
+    data: *const u8,
+    len: usize,
+    table: *mut IndexEntry,
+    capacity: usize,
+    count: *mut usize,
+) -> i32 {
+    // SAFETY: forwarded caller contract.
+    unsafe { index_common(data, len, table, capacity, count, false) }
+}
+
+/// Rebuilds the index from the records and tombstones; see `samplepack.h`.
+///
+/// # Safety
+/// Pointers must be valid as documented in the header.
+#[no_mangle]
+pub unsafe extern "C" fn sp_pack_rebuild_index(
+    data: *const u8,
+    len: usize,
+    table: *mut IndexEntry,
+    capacity: usize,
+    count: *mut usize,
+) -> i32 {
+    // SAFETY: forwarded caller contract.
+    unsafe { index_common(data, len, table, capacity, count, true) }
+}
+
+/// Finds a sample id in an index; see `samplepack.h`.
+///
+/// # Safety
+/// Pointers must be valid as documented in the header.
+#[no_mangle]
+pub unsafe extern "C" fn sp_index_find(
+    table: *const IndexEntry,
+    count: usize,
+    id: *const SampleId,
+    position: *mut usize,
+) -> i32 {
+    // SAFETY: forwarded caller contract.
+    let run = || unsafe {
+        let pos = out_ref(position)?;
+        *pos = 0;
+        let t = in_slice(table, count)?;
+        let id = in_ref(id)?;
+        *pos = pack::find_position(t, id).ok_or(pack::Error::NotFound)?;
+        Ok(())
+    };
+    pcode(run())
+}
+
+/// Checks a record's header and describes it; see `samplepack.h`.
+///
+/// # Safety
+/// Pointers must be valid as documented in the header.
+#[no_mangle]
+pub unsafe extern "C" fn sp_pack_record(
+    data: *const u8,
+    len: usize,
+    entry: *const IndexEntry,
+    info: *mut RecordInfo,
+) -> i32 {
+    // SAFETY: forwarded caller contract.
+    let run = || unsafe {
+        let info = out_ref(info)?;
+        *info = RecordInfo::default();
+        let r = Record::at(pack_bytes(data, len)?, in_ref(entry)?)?;
+        *info = *r.info();
+        Ok(())
+    };
+    pcode(run())
+}
+
+/// # Safety
+/// Pointers must be valid as documented in the header.
+unsafe fn record<'a>(data: *const u8, len: usize, info: *const RecordInfo) -> Result<Record<'a>, pack::Error> {
+    // SAFETY: forwarded caller contract.
+    unsafe { Record::from_info(pack_bytes(data, len)?, in_ref(info)?) }
+}
+
+/// The preload window of a record; see `samplepack.h`.
+///
+/// # Safety
+/// Pointers must be valid as documented in the header.
+#[no_mangle]
+pub unsafe extern "C" fn sp_record_window(
+    data: *const u8,
+    len: usize,
+    info: *const RecordInfo,
+    window: *mut *const u8,
+    bytes: *mut usize,
+) -> i32 {
+    // SAFETY: forwarded caller contract.
+    let run = || unsafe {
+        let (w, b) = (out_ref(window)?, out_ref(bytes)?);
+        *w = core::ptr::null();
+        *b = 0;
+        let s = record(data, len, info)?.window();
+        *w = s.as_ptr();
+        *b = s.len();
+        Ok(())
+    };
+    pcode(run())
+}
+
+/// The frames and frame table of a record; see `samplepack.h`.
+///
+/// # Safety
+/// Pointers must be valid as documented in the header.
+#[no_mangle]
+pub unsafe extern "C" fn sp_record_frames(
+    data: *const u8,
+    len: usize,
+    info: *const RecordInfo,
+    frames: *mut *const u8,
+    frames_len: *mut usize,
+    table: *mut *const u8,
+    table_entries: *mut usize,
+) -> i32 {
+    // SAFETY: forwarded caller contract.
+    let run = || unsafe {
+        let (f, fl, t, tl) = (
+            out_ref(frames)?,
+            out_ref(frames_len)?,
+            out_ref(table)?,
+            out_ref(table_entries)?,
+        );
+        (*f, *fl, *t, *tl) = (core::ptr::null(), 0, core::ptr::null(), 0);
+        let r = record(data, len, info)?;
+        let (fs, ts) = (r.frames(), r.frame_table());
+        (*f, *fl, *t, *tl) = (fs.as_ptr(), fs.len(), ts.as_ptr(), ts.len() / 4);
+        Ok(())
+    };
+    pcode(run())
+}
+
+/// Decodes a range of blocks of a record; see `samplepack.h`.
+///
+/// # Safety
+/// Pointers must be valid as documented in the header.
+#[no_mangle]
+pub unsafe extern "C" fn sp_record_decode(
+    data: *const u8,
+    len: usize,
+    info: *const RecordInfo,
+    first_block: u32,
+    blocks: u32,
+    flags: u32,
+    scratch_ptr: *mut Scratch,
+    ch0: *mut i16,
+    ch1: *mut i16,
+    capacity: usize,
+    frames_written: *mut u64,
+) -> i32 {
+    // SAFETY: forwarded caller contract.
+    let run = || unsafe {
+        let fw = out_ref(frames_written)?;
+        *fw = 0;
+        let r = record(data, len, info)?;
+        let bad = |_| pack::Error::InvalidArgument;
+        let (o0, o1) = (
+            output(ch0, capacity, usize::MAX).map_err(bad)?,
+            output(ch1, capacity, usize::MAX).map_err(bad)?,
+        );
+        if overlaps(o0, o1) {
+            return Err(pack::Error::InvalidArgument);
+        }
+        let s = scratch(scratch_ptr).map_err(bad)?;
+        *fw = r.decode(first_block, blocks, flags, s, o0, o1)? as u64;
+        Ok(())
+    };
+    pcode(run())
+}
+
+/// Sample id of interleaved PCM; see `samplepack.h`.
+///
+/// # Safety
+/// Pointers must be valid as documented in the header.
+#[no_mangle]
+pub unsafe extern "C" fn sp_sample_id_pcm(
+    rate: u32,
+    channels: u32,
+    pcm: *const i16,
+    frames: usize,
+    id: *mut SampleId,
+) -> i32 {
+    // SAFETY: forwarded caller contract.
+    let run = || unsafe {
+        let out = out_ref(id)?;
+        *out = [0; 32];
+        if !(1..=2).contains(&channels) || rate == 0 {
+            return Err(pack::Error::InvalidArgument);
+        }
+        let n = frames
+            .checked_mul(channels as usize)
+            .ok_or(pack::Error::InvalidArgument)?;
+        let mut h = IdHasher::new(rate, channels as u8, 16);
+        h.update(in_slice(pcm, n)?);
+        *out = h.finish();
+        Ok(())
+    };
+    pcode(run())
+}
+
+fn verify_scratch<'a>(p: *mut VerifyScratch) -> Result<&'a mut VerifyScratch, pack::Error> {
+    // SAFETY: as for `scratch`: the caller provides an exclusive, aligned sp_verify_scratch.
+    unsafe { out_ref(p) }
+}
+
+/// Sample id computed from a record's decoded audio; see `samplepack.h`.
+///
+/// # Safety
+/// Pointers must be valid as documented in the header.
+#[no_mangle]
+pub unsafe extern "C" fn sp_record_sample_id(
+    data: *const u8,
+    len: usize,
+    info: *const RecordInfo,
+    vs: *mut VerifyScratch,
+    id: *mut SampleId,
+) -> i32 {
+    // SAFETY: forwarded caller contract.
+    let run = || unsafe {
+        let out = out_ref(id)?;
+        *out = [0; 32];
+        *out = pack::record_sample_id(&record(data, len, info)?, verify_scratch(vs)?)?;
+        Ok(())
+    };
+    pcode(run())
+}
+
+/// Full verification of one record; see `samplepack.h`.
+///
+/// # Safety
+/// Pointers must be valid as documented in the header.
+#[no_mangle]
+pub unsafe extern "C" fn sp_record_verify(
+    data: *const u8,
+    len: usize,
+    info: *const RecordInfo,
+    vs: *mut VerifyScratch,
+) -> i32 {
+    // SAFETY: forwarded caller contract.
+    let run = || unsafe {
+        let r = record(data, len, info)?;
+        // Re-check the header in full: the info struct is the caller's memory.
+        let r = Record::at(pack_bytes(data, len)?, &r.entry())?;
+        pack::verify_record(&r, verify_scratch(vs)?)
+    };
+    pcode(run())
+}
+
+/// Full verification of a whole pack; see `samplepack.h`.
+///
+/// # Safety
+/// Pointers must be valid as documented in the header.
+#[no_mangle]
+pub unsafe extern "C" fn sp_pack_verify(
+    data: *const u8,
+    len: usize,
+    vs: *mut VerifyScratch,
+    table: *mut IndexEntry,
+    capacity: usize,
+) -> i32 {
+    // SAFETY: forwarded caller contract.
+    let run = || unsafe {
+        let p = Pack::open(pack_bytes(data, len)?)?;
+        let t = output(table, capacity, usize::MAX).map_err(|_| pack::Error::InvalidArgument)?;
+        pack::verify_pack(&p, verify_scratch(vs)?, t).map(|_| ())
+    };
+    pcode(run())
 }

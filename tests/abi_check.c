@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stddef.h>
+#include <string.h>
 #include "samplepack.h"
 #include "expect.h"
 
@@ -28,8 +29,17 @@ _Static_assert(SP_FLAC_MAX_LPC_ORDER == EXPECT_MAX_LPC, "max lpc");
 _Static_assert(SP_FLAC_CHECK_CRC == EXPECT_FLAG_CRC, "crc flag");
 EXPECT_ENUM_ASSERTS
 
+static uint8_t *slurp(const char *p, size_t *n) {
+    FILE *f = fopen(p, "rb"); if (!f) return NULL;
+    fseek(f, 0, SEEK_END); *n = (size_t)ftell(f); fseek(f, 0, SEEK_SET);
+    uint8_t *d = malloc(*n ? *n : 1); if (fread(d, 1, *n, f) != *n) { free(d); d = NULL; }
+    fclose(f); return d;
+}
+
+static int pack_calls(const char *pack_path, const char *pcm_path);
+
 int main(int argc, char **argv) {
-    if (argc != 2) return 2;
+    if (argc != 4) return 2;
     FILE *f = fopen(argv[1], "rb");
     if (!f) return 2;
     static uint8_t buf[1 << 20];
@@ -54,6 +64,48 @@ int main(int argc, char **argv) {
     if (sp_flac_scan(buf + first, len - first, SP_FLAC_CHECK_CRC, &scratch, table, 64, &sum) != SP_OK) return 13;
     if (sum.frames != 5 || sum.consumed != len - first || sum.total_samples != 5000 || table[0].offset != 0 || table[0].samples != 1024) return 14;
     if (sp_flac_scan(buf + first, len - first, 0, &scratch, table, 2, &sum) != SP_ERR_BUFFER_TOO_SMALL || sum.frames != 2) return 15;
+    int rc = pack_calls(argv[2], argv[3]);
+    if (rc) return rc;
     printf("abi ok\n");
+    return 0;
+}
+
+/* The pack file holds a stereo record (the sweep corpus stream, 5000 frames, window 4096) and a mono one. */
+static int pack_calls(const char *pack_path, const char *pcm_path) {
+    size_t len = 0, pcm_len = 0;
+    uint8_t *p = slurp(pack_path, &len), *pcm = slurp(pcm_path, &pcm_len);
+    if (!p || !pcm) return 20;
+    sp_pack_info pi; size_t n = 0, pos = 9; uint64_t committed = 0;
+    static sp_verify_scratch vs; static sp_flac_scratch fs; static int16_t l[8192], r[8192];
+    sp_index_entry idx[4]; sp_record_info ri; uint8_t id[32], id2[32];
+    if (sp_pack_open(p, len, &pi) != SP_OK || pi.records != 2 || pi.length != len) return 21;
+    if (sp_pack_open(p, len - 1, &pi) != SP_ERR_NO_FOOTER || pi.records != 0) return 22;
+    if (sp_pack_recover(p, len - 1, &committed) != SP_OK || committed != 4096) return 23;
+    if (sp_pack_index(p, len, idx, 1, &n) != SP_ERR_BUFFER_TOO_SMALL || n != 2) return 24;
+    if (sp_pack_index(p, len, idx, 4, &n) != SP_OK || n != 2) return 25;
+    if (sp_pack_rebuild_index(p, len, idx + 2, 2, &n) != SP_OK || n != 2 || memcmp(idx, idx + 2, 2 * sizeof idx[0])) return 26;
+    if (sp_sample_id_pcm(44100, 2, (const int16_t *)pcm, pcm_len / 4, id) != SP_OK) return 27;
+    if (sp_index_find(idx, 2, id, &pos) != SP_OK || pos > 1) return 28;
+    if (sp_pack_record(p, len, &idx[pos], &ri) != SP_OK || ri.frames != 5000 || ri.channels != 2 || ri.window_frames != 4096 || ri.credit_len != 8) return 29;
+    if (memcmp(p + ri.offset + ri.credit_offset, "abi test", 8)) return 30;
+    const uint8_t *w = NULL, *fr = NULL, *tb = NULL; size_t wb = 0, fl = 0, te = 0;
+    if (sp_record_window(p, len, &ri, &w, &wb) != SP_OK || wb != 4096 * 4 || (size_t)(w - p) % SP_PACK_PAGE || memcmp(w, pcm, wb)) return 31;
+    if (sp_record_frames(p, len, &ri, &fr, &fl, &tb, &te) != SP_OK || te != ri.blocks + 1 || fl != ri.frame_bytes) return 32;
+    uint64_t got = 0;
+    if (sp_record_decode(p, len, &ri, 0, ri.blocks, 0, &fs, l, r, 8192, &got) != SP_OK || got != 5000) return 33;
+    for (int i = 0; i < 5000; i++) { int16_t a, b; memcpy(&a, pcm + 4 * i, 2); memcpy(&b, pcm + 4 * i + 2, 2); if (l[i] != a || r[i] != b) return 34; }
+    if (sp_record_decode(p, len, &ri, 4, 2, 0, &fs, l, r, 8192, &got) != SP_ERR_INVALID_ARGUMENT) return 35;
+    if (sp_record_decode(p, len, &ri, 0, 2, 0, &fs, l, r, 100, &got) != SP_ERR_BUFFER_TOO_SMALL) return 36;
+    if (sp_record_sample_id(p, len, &ri, &vs, id2) != SP_OK || memcmp(id, id2, 32)) return 37;
+    if (sp_record_verify(p, len, &ri, &vs) != SP_OK) return 38;
+    if (sp_pack_verify(p, len, &vs, idx, 4) != SP_OK) return 39;
+    id[0] ^= 1;
+    if (sp_index_find(idx, 2, id, &pos) != SP_ERR_NOT_FOUND) return 40;
+    if (sp_pack_open(NULL, 5, &pi) != SP_ERR_INVALID_ARGUMENT || sp_pack_open(p, len, NULL) != SP_ERR_INVALID_ARGUMENT) return 41;
+    ri.offset += 1;
+    if (sp_record_window(p, len, &ri, &w, &wb) != SP_ERR_NOT_RECORD && sp_record_window(p, len, &ri, &w, &wb) != SP_ERR_INVALID_ARGUMENT) return 42;
+    p[4096 + 40] ^= 1;  /* inside the first record's sample id: its header checksum fails */
+    if (sp_pack_record(p, len, &idx[0], &ri) != SP_ERR_BAD_CHECKSUM && sp_pack_record(p, len, &idx[1], &ri) != SP_ERR_BAD_CHECKSUM) return 43;
+    free(p); free(pcm);
     return 0;
 }

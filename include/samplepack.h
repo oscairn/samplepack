@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 /*
- * samplepack: C interface to the sample pack reader.
+ * samplepack: C interface to the Oscairn Sample Pack (OSP, .osp) reader and its FLAC subset
+ * decoder. docs/format.md is the format specification.
  *
  * Conventions
  *  - Every function returns a status: 0 (SP_OK) or a positive sp_status code. No function
@@ -38,7 +39,34 @@ typedef enum sp_status {
     SP_ERR_BAD_RESIDUAL = 9,     /* malformed residual */
     SP_ERR_OVERRUN = 10,         /* frame needs more bits than the data holds */
     SP_ERR_FRAME_CRC = 11,       /* frame CRC-16 mismatch (SP_FLAC_CHECK_CRC) */
-    SP_ERR_BAD_STREAM = 12       /* not a FLAC stream header */
+    SP_ERR_BAD_STREAM = 12,      /* not a FLAC stream header */
+    /* packs (docs/format.md, "Errors") */
+    SP_ERR_NOT_PACK = 32,            /* shorter than the pack header, or wrong magic */
+    SP_ERR_UNSUPPORTED_VERSION = 33, /* major version other than 1 */
+    SP_ERR_NO_FOOTER = 34,           /* no valid footer at the end: uncommitted tail, see sp_pack_recover */
+    SP_ERR_TOO_LARGE = 35,           /* pack larger than SP_PACK_MAX_BYTES */
+    SP_ERR_BAD_CHECKSUM = 36,        /* entry CRC-32C mismatch */
+    SP_ERR_BAD_ENTRY = 37,           /* malformed entry prefix */
+    SP_ERR_BAD_FOOTER = 38,          /* footer fields inconsistent */
+    SP_ERR_BAD_TRAILER = 39,         /* trailer count, length or fields inconsistent */
+    SP_ERR_BAD_OFFSET = 40,          /* offset, length or preload span unaligned or out of range */
+    SP_ERR_OVERLAP = 41,             /* records overlap or are not listed in file order */
+    SP_ERR_RESERVED_NONZERO = 42,    /* reserved field not zero */
+    SP_ERR_BAD_FORMAT = 43,          /* rate, channels, bits, flags or block size outside version 1 */
+    SP_ERR_BAD_LAYOUT = 44,          /* head, window or record length, window frames or block count wrong */
+    SP_ERR_BAD_FRAME_TABLE = 45,     /* frame table not increasing, or smallest/largest frame wrong */
+    SP_ERR_BAD_CREDIT = 46,          /* credit too long or not UTF-8 */
+    SP_ERR_DUPLICATE_ID = 47,        /* two live records with one sample id */
+    SP_ERR_NOT_LIVE = 48,            /* tombstone for a sample id that is not live */
+    SP_ERR_MISMATCH = 49,            /* record disagrees with the index entry pointing at it */
+    SP_ERR_NOT_FOUND = 50,           /* no record with that sample id */
+    SP_ERR_FRAME_MISMATCH = 51,      /* frame block size, channels, number, rate or length disagree with the record */
+    SP_ERR_PADDING = 52,             /* padding not zero (full verification) */
+    SP_ERR_WINDOW_MISMATCH = 53,     /* preload window differs from the decoded frames */
+    SP_ERR_MD5_MISMATCH = 54,        /* MD5 of the decoded audio differs */
+    SP_ERR_ID_MISMATCH = 55,         /* sample id of the decoded audio differs */
+    SP_ERR_TRAILER_MISMATCH = 56,    /* live set rebuilt from the records differs from the trailer */
+    SP_ERR_NOT_RECORD = 57           /* the entry is not a record */
 } sp_status;
 
 /* Flag for sp_flac_decode_frame and sp_flac_scan: verify the header CRC-8 and the frame CRC-16. */
@@ -97,6 +125,118 @@ sp_status sp_flac_scan(const uint8_t *data, size_t len, uint32_t flags, sp_flac_
 
 /* Offset of the first frame in a .flac file (after the metadata blocks). */
 sp_status sp_flac_first_frame(const uint8_t *data, size_t len, uint64_t *offset);
+
+/* ---------------------------------------------------------------------------------------------
+ * Packs (docs/format.md). Every function takes the committed pack as data[0..len): normally a
+ * read-only mapping of the whole file. Returned pointers point into that memory. Nothing in a
+ * pack is trusted: every offset, length and count is checked against len before use.
+ */
+
+#define SP_PACK_PAGE 4096            /* entry alignment */
+#define SP_PACK_MAX_BYTES (1u << 30) /* largest pack */
+#define SP_PACK_MAX_RECORDS 1048576  /* most records in one trailer */
+#define SP_PACK_MAX_CREDIT 1024      /* longest credit string, bytes */
+#define SP_SAMPLE_ID_BYTES 32
+
+/* One live record: an element of the index the caller holds. */
+typedef struct sp_index_entry {
+    uint8_t id[SP_SAMPLE_ID_BYTES]; /* sample id */
+    uint64_t offset;                /* record offset in the pack */
+    uint64_t length;                /* record length, bytes */
+    uint64_t preload;               /* bytes from the record start to the end of its window: read these first */
+} sp_index_entry;
+
+typedef struct sp_pack_info {
+    uint64_t length;         /* committed length (len) */
+    uint64_t trailer_offset; /* == length for an empty pack */
+    uint64_t records;        /* live records */
+    uint32_t minor;          /* minor version of the pack header */
+    uint32_t reserved;       /* zero */
+} sp_pack_info;
+
+/* A record's header fields (filled by sp_pack_record; passed back to the sp_record_* calls, which
+ * re-check it against the pack, so a damaged struct gives an error, never an out-of-bounds read). */
+typedef struct sp_record_info {
+    uint64_t offset, length;
+    uint8_t id[SP_SAMPLE_ID_BYTES]; /* as stated; trusted only after sp_record_verify */
+    uint8_t md5[16];                /* MD5 of the decoded audio, as stated */
+    uint32_t rate, channels, bits, frames;
+    uint32_t window_frames, block_size, blocks, frame_bytes;
+    uint32_t head_len, window_bytes, credit_offset, credit_len; /* offsets within the record */
+    uint32_t table_offset, min_frame, max_frame, minor;
+} sp_record_info;
+
+/* Working memory for verification (about 64 KiB, 4-byte aligned), reusable, one call at a time. */
+typedef struct sp_verify_scratch {
+    sp_flac_scratch flac;
+    int16_t ch[2][SP_FLAC_MAX_BLOCK];
+    uint8_t bytes[SP_FLAC_MAX_BLOCK * 4];
+} sp_verify_scratch;
+
+/* Check the header, footer and trailer. SP_ERR_NO_FOOTER: the tail is uncommitted (torn append);
+ * call sp_pack_recover and use its length. `info` is zeroed on failure. */
+sp_status sp_pack_open(const uint8_t *data, size_t len, sp_pack_info *info);
+
+/* The committed length of a pack whose tail may be torn: the largest page-aligned prefix that
+ * sp_pack_open accepts (SP_PACK_PAGE, an empty pack, if none). A writer truncates the file to it;
+ * a reader uses data[0..committed). On an error nothing may be truncated. */
+sp_status sp_pack_recover(const uint8_t *data, size_t len, uint64_t *committed);
+
+/* Fill table[0..capacity) with the trailer's entries sorted by id, for sp_index_find. *count is the
+ * number written, or the number needed with SP_ERR_BUFFER_TOO_SMALL. */
+sp_status sp_pack_index(const uint8_t *data, size_t len, sp_index_entry *table, size_t capacity,
+                        size_t *count);
+
+/* As sp_pack_index, but rebuilt from the records and tombstones alone (every record header is
+ * checked). Needs one slot per record and tombstone in the pack. */
+sp_status sp_pack_rebuild_index(const uint8_t *data, size_t len, sp_index_entry *table,
+                                size_t capacity, size_t *count);
+
+/* Binary search of a sorted index: *position is the entry's index, or SP_ERR_NOT_FOUND. */
+sp_status sp_index_find(const sp_index_entry *table, size_t count, const uint8_t id[SP_SAMPLE_ID_BYTES],
+                        size_t *position);
+
+/* Check the header of the record an entry points at (CRC-32C, every field, the frame table) and
+ * describe it. No audio is decoded. */
+sp_status sp_pack_record(const uint8_t *data, size_t len, const sp_index_entry *entry,
+                         sp_record_info *info);
+
+/* The preload window: frames [0, window_frames), int16 little-endian interleaved, 4096-aligned
+ * within the pack. *bytes may be 0 (no window). */
+sp_status sp_record_window(const uint8_t *data, size_t len, const sp_record_info *info,
+                           const uint8_t **window, size_t *bytes);
+
+/* The FLAC frames (one stream) and the frame table: table_entries (= blocks + 1) little-endian
+ * uint32 offsets into the frames. */
+sp_status sp_record_frames(const uint8_t *data, size_t len, const sp_record_info *info,
+                           const uint8_t **frames, size_t *frames_len, const uint8_t **table,
+                           size_t *table_entries);
+
+/* Decode blocks [first_block, first_block + blocks) into ch0 (and ch1 for stereo), contiguously;
+ * each needs capacity for every frame of the range. flags: 0 at play time, or SP_FLAC_CHECK_CRC.
+ * On an error the outputs may hold the blocks decoded before it. */
+sp_status sp_record_decode(const uint8_t *data, size_t len, const sp_record_info *info,
+                           uint32_t first_block, uint32_t blocks, uint32_t flags,
+                           sp_flac_scratch *scratch, int16_t *ch0, int16_t *ch1, size_t capacity,
+                           uint64_t *frames_written);
+
+/* Sample id of 16-bit interleaved PCM (frames x channels samples). */
+sp_status sp_sample_id_pcm(uint32_t rate, uint32_t channels, const int16_t *pcm, size_t frames,
+                           uint8_t id[SP_SAMPLE_ID_BYTES]);
+
+/* Sample id computed from a record's decoded audio (decodes every frame, CRCs checked). */
+sp_status sp_record_sample_id(const uint8_t *data, size_t len, const sp_record_info *info,
+                              sp_verify_scratch *scratch, uint8_t id[SP_SAMPLE_ID_BYTES]);
+
+/* Full verification of one record: header, padding, every frame (CRCs, numbering, block sizes),
+ * window, MD5 and recomputed sample id. Required before a record is installed or trusted. */
+sp_status sp_record_verify(const uint8_t *data, size_t len, const sp_record_info *info,
+                           sp_verify_scratch *scratch);
+
+/* Full verification of a whole pack: sp_pack_open, every entry, the rebuilt live set equal to the
+ * trailer, and sp_record_verify on every live record. table: one slot per record and tombstone. */
+sp_status sp_pack_verify(const uint8_t *data, size_t len, sp_verify_scratch *scratch,
+                         sp_index_entry *table, size_t capacity);
 
 #ifdef __cplusplus
 }
