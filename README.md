@@ -14,7 +14,8 @@ install, verify and export tools; it is the single parser of untrusted pack file
   SHA-256, MD5).
 * `crates/samplepack-capi`: static library and C ABI (`include/samplepack.h`).
 * `crates/samplepack-cli`: the `samplepack` tool (std, no third-party crates): `pack` (from 16-bit
-  WAV or FLAC, with its own small subset encoder), `list`, `verify [--full]`, `extract` (to a
+  WAV or FLAC, with its own deterministic subset encoder: fixed and LPC order 1 to 4 predictors,
+  every choice made by exact coded size), `list`, `verify [--full]`, `extract` (to a
   standard `.flac`), `copy`, `combine`, `remove`, `compact`, `locality`.
 * `docs/format.md`: the OSP format, normative.
 * `docs/decoder.md`: the exact FLAC subset and every rejection reason.

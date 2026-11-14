@@ -286,6 +286,26 @@ fn deterministic_output() {
     fails(bin().args(["pack", "-o"]).arg(d.join("1.osp")).args(&ins));
 }
 
+/// The encoder is deterministic across targets: CI runs this on every platform against one hash.
+#[test]
+fn same_pack_on_every_target() {
+    let d = work("golden");
+    let ins: Vec<PathBuf> = [
+        "sweep-st-b1024-l4-r44100",
+        "colored-mono-b1024-l4-r44100",
+        "correlated-st-b1000-l4-Me-r22050",
+        "clipped-st-b4096-l8-r48000",
+    ]
+    .iter()
+    .map(|n| corpus(&format!("{n}.flac")))
+    .collect();
+    let p = d.join("g.osp");
+    run(bin().args(["pack", "--credit", "golden", "-o"]).arg(&p).args(&ins));
+    let h = samplepack::hash::Sha256::digest(&std::fs::read(&p).unwrap());
+    assert_eq!(hex(&h), GOLDEN);
+}
+const GOLDEN: &str = "70be89b79f3f0fa724b0711a9657d983b999ec7d8d170bd1db2f6b184d0aca97";
+
 #[test]
 fn torn_append_is_cut_back() {
     let d = work("torn");

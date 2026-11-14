@@ -16,6 +16,9 @@ use std::process::ExitCode;
 
 const BLOCK: usize = 1024;
 
+/// An encoded input: its sample id and record bytes.
+type Encoded = Result<(SampleId, Vec<u8>), String>;
+
 fn usage() -> &'static str {
     "usage:
   samplepack pack -o OUT.osp [--append] [--window FRAMES] [--credit TEXT] INPUT.(wav|flac)...
@@ -123,16 +126,11 @@ fn cmd_pack(args: &[String]) -> Result<(), String> {
     if inputs.is_empty() {
         return Err("pack needs at least one input".into());
     }
-    let mut vs = Box::new(VerifyScratch::new());
-    let mut records: Vec<Vec<u8>> = Vec::new();
-    let mut ids: Vec<SampleId> = Vec::new();
-    for input in &inputs {
+    // Inputs are encoded in parallel; results are used in input order, so output does not depend
+    // on the thread count.
+    let encode_one = |input: &str, vs: &mut VerifyScratch| -> Encoded {
         let a = audio::read_audio(Path::new(input))?;
         let id = sample_id(a.rate, a.channels as u8, &a.pcm);
-        if ids.contains(&id) {
-            eprintln!("{input}: same audio as an earlier input ({}), skipped", hex(&id));
-            continue;
-        }
         let frames = (a.pcm.len() / a.channels) as u32;
         let (data, table) = encode::encode(&a.pcm, a.channels, a.rate, BLOCK);
         let p = RecordParams {
@@ -146,11 +144,45 @@ fn cmd_pack(args: &[String]) -> Result<(), String> {
             frame_data: &data,
         };
         let mut rec = vec![0u8; pack::record_len(&p).map_err(|e| format!("{input}: {}", err(e)))?];
-        let info = pack::write_record(&p, &mut vs, &mut rec).map_err(|e| format!("{input}: {}", err(e)))?;
+        let info = pack::write_record(&p, vs, &mut rec).map_err(|e| format!("{input}: {}", err(e)))?;
         // The record's id is computed from its decoded frames; equality with the id of the input
         // samples shows the stored audio decodes bit-exactly to the input.
         if info.id != id {
             return Err(format!("{input}: encoded audio does not decode to the input"));
+        }
+        Ok((id, rec))
+    };
+    let threads = std::thread::available_parallelism()
+        .map_or(1, |n| n.get())
+        .min(inputs.len());
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let results: Vec<(usize, Encoded)> = std::thread::scope(|sc| {
+        let workers: Vec<_> = (0..threads)
+            .map(|_| {
+                sc.spawn(|| {
+                    let mut vs = Box::new(VerifyScratch::new());
+                    let mut done = Vec::new();
+                    loop {
+                        let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        let Some(input) = inputs.get(i) else { break done };
+                        done.push((i, encode_one(input, &mut vs)));
+                    }
+                })
+            })
+            .collect();
+        workers.into_iter().flat_map(|w| w.join().unwrap_or_default()).collect()
+    });
+    let mut ordered: Vec<Option<Encoded>> = (0..inputs.len()).map(|_| None).collect();
+    for (i, r) in results {
+        ordered[i] = Some(r);
+    }
+    let mut records: Vec<Vec<u8>> = Vec::new();
+    let mut ids: Vec<SampleId> = Vec::new();
+    for (input, r) in inputs.iter().zip(ordered) {
+        let (id, rec) = r.ok_or_else(|| format!("{input}: encoder thread failed"))??;
+        if ids.contains(&id) {
+            eprintln!("{input}: same audio as an earlier input ({}), skipped", hex(&id));
+            continue;
         }
         println!("{}  {input}", hex(&id));
         ids.push(id);
