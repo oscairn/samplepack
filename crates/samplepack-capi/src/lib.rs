@@ -428,6 +428,72 @@ pub unsafe extern "C" fn sp_pack_record(
     pcode(run())
 }
 
+/// Checks a pack from its header page and its tail and fills the index; see `samplepack.h`.
+///
+/// # Safety
+/// Pointers must be valid as documented in the header.
+#[no_mangle]
+pub unsafe extern "C" fn sp_pack_tail_index(
+    header: *const u8,
+    header_len: usize,
+    tail: *const u8,
+    tail_len: usize,
+    len: u64,
+    info: *mut PackInfo,
+    table: *mut IndexEntry,
+    capacity: usize,
+    count: *mut usize,
+) -> i32 {
+    // SAFETY: forwarded caller contract.
+    let run = || unsafe {
+        let info = out_ref(info)?;
+        *info = PackInfo::default();
+        let count = out_ref(count)?;
+        *count = 0;
+        let len = usize::try_from(len).map_err(|_| pack::Error::TooLarge)?;
+        let t = Pack::check_tail(pack_bytes(header, header_len)?, pack_bytes(tail, tail_len)?, len)?;
+        *info = PackInfo {
+            length: len as u64,
+            trailer_offset: len.wrapping_sub(tail_len) as u64,
+            records: t.records() as u64,
+            minor: u32::from(t.minor()),
+            reserved: 0,
+        };
+        if t.records() == 0 {
+            return Ok(());
+        }
+        let out = output(table, capacity, usize::MAX).map_err(|_| pack::Error::InvalidArgument)?;
+        if out.len() < t.records() {
+            *count = t.records();
+            return Err(pack::Error::BufferTooSmall);
+        }
+        *count = t.index(out)?;
+        Ok(())
+    };
+    pcode(run())
+}
+
+/// Checks a record from its first bytes against its index entry; see `samplepack.h`.
+///
+/// # Safety
+/// Pointers must be valid as documented in the header.
+#[no_mangle]
+pub unsafe extern "C" fn sp_record_head(
+    head: *const u8,
+    head_len: usize,
+    entry: *const IndexEntry,
+    info: *mut RecordInfo,
+) -> i32 {
+    // SAFETY: forwarded caller contract.
+    let run = || unsafe {
+        let info = out_ref(info)?;
+        *info = RecordInfo::default();
+        *info = Record::check_head(pack_bytes(head, head_len)?, in_ref(entry)?)?;
+        Ok(())
+    };
+    pcode(run())
+}
+
 /// The record an index entry points at, re-read from the pack in constant time.
 ///
 /// # Safety

@@ -25,22 +25,30 @@ fn magic_of(d: &[u8]) -> [u8; 4] {
 /// Validates the prefix of the entry at the start of `d`, where `d` runs to the end of the region
 /// the entry must fit in. The major version is the caller's to check.
 pub(crate) fn prefix(d: &[u8]) -> Result<Prefix, Error> {
-    let p = prefix_fields(d)?;
+    prefix_in(d, d.len())
+}
+
+/// [`prefix`] of an entry of which `d` holds only the start, in a region of `region` bytes: the
+/// checked bytes must lie in `d`.
+fn prefix_in(d: &[u8], region: usize) -> Result<Prefix, Error> {
+    let p = prefix_fields_in(d, region)?;
+    if p.checked > d.len() {
+        return Err(Error::BadEntry);
+    }
     if entry_crc(d, p.checked) != Some(rd_u32(d, 20)) {
         return Err(Error::BadChecksum);
     }
     Ok(p)
 }
 
-/// [`prefix`] without the checksum.
-fn prefix_fields(d: &[u8]) -> Result<Prefix, Error> {
+fn prefix_fields_in(d: &[u8], region: usize) -> Result<Prefix, Error> {
     if d.len() < PREFIX {
         return Err(Error::BadEntry);
     }
     let length = rd_u64(d, 8);
     let checked = rd_u32(d, 16) as usize;
     let length = usize::try_from(length).map_err(|_| Error::BadEntry)?;
-    if length < PAGE || !length.is_multiple_of(PAGE) || length > d.len() || checked < PREFIX || checked > length {
+    if length < PAGE || !length.is_multiple_of(PAGE) || length > region || checked < PREFIX || checked > length {
         return Err(Error::BadEntry);
     }
     Ok(Prefix {
@@ -48,6 +56,18 @@ fn prefix_fields(d: &[u8]) -> Result<Prefix, Error> {
         length,
         checked,
     })
+}
+
+fn index_into(entries: impl Iterator<Item = IndexEntry>, count: usize, out: &mut [IndexEntry]) -> Result<usize, Error> {
+    let dst = out.get_mut(..count).ok_or(Error::BufferTooSmall)?;
+    for (d, e) in dst.iter_mut().zip(entries) {
+        *d = e;
+    }
+    sort(dst, |a, b| a.id < b.id);
+    if dst.windows(2).any(|w| matches!(w, [a, b] if a.id == b.id)) {
+        return Err(Error::DuplicateId);
+    }
+    Ok(count)
 }
 
 /// Checks the pack header; returns its minor version.
@@ -129,45 +149,8 @@ impl<'a> Pack<'a> {
         if !len.is_multiple_of(PAGE) {
             return Err(Error::NoFooter);
         }
-        let foot = data.get(len.wrapping_sub(FOOTER)..).unwrap_or(&[]);
-        if magic_of(foot) != MAGIC_FOOTER || Some(crc32c(foot.get(..28).unwrap_or(&[]))) != Some(rd_u32(foot, 28)) {
-            return Err(Error::NoFooter);
-        }
-        let toff = rd_u64(foot, 8);
-        let tlen = rd_u64(foot, 16);
-        if !toff.is_multiple_of(PAGE as u64) || toff < PAGE as u64 || toff.checked_add(tlen) != Some(len as u64) {
-            return Err(Error::BadFooter);
-        }
-        let toff = usize_of(toff)?;
-        let t = data.get(toff..).unwrap_or(&[]);
-        if magic_of(t) != MAGIC_TRAILER || rd_u64(t, 8) != tlen {
-            return Err(Error::BadFooter);
-        }
-        if rd_u16(t, 4) != MAJOR {
-            return Err(Error::UnsupportedVersion);
-        }
-        let p = prefix(t)?;
-        let count = rd_u32(t, 24) as usize;
-        let need = count
-            .checked_mul(TRAILER_ENTRY)
-            .and_then(|v| v.checked_add(TRAILER_FIXED))
-            .ok_or(Error::BadTrailer)?;
-        let fits = need.checked_add(FOOTER).is_some_and(|v| v <= p.length);
-        if count > MAX_RECORDS || !fits || p.checked < need {
-            return Err(Error::BadTrailer);
-        }
-        if p.minor == 0 {
-            if p.checked != need || page_up((need as u64).wrapping_add(FOOTER as u64)) != Some(p.length as u64) {
-                return Err(Error::BadTrailer);
-            }
-            if rd_u32(t, 28) != 0 || rd_u32(foot, 4) != 0 || rd_u32(foot, 24) != 0 {
-                return Err(Error::ReservedNonZero);
-            }
-        }
-        let mut prev = PAGE as u64;
-        for i in 0..count {
-            prev = check_entry(&trailer_entry(t, i), prev, toff as u64)?;
-        }
+        let toff = footer_trailer(data.get(len.wrapping_sub(FOOTER)..).unwrap_or(&[]), len)?;
+        let (count, _) = check_trailer(data.get(toff..).unwrap_or(&[]), toff, len)?;
         Ok(Self {
             data,
             trailer: toff,
@@ -176,6 +159,115 @@ impl<'a> Pack<'a> {
         })
     }
 
+    /// Checks a pack as [`Pack::open`] does from its parts only: its header page `header`, and
+    /// `tail`, its last bytes from the newest trailer on (the trailer offset is in the footer, the
+    /// last 32 bytes of the file), in a committed file of `len` bytes. Records are checked when
+    /// accessed ([`Record::check_head`]).
+    pub fn check_tail(header: &[u8], tail: &'a [u8], len: usize) -> Result<Tail<'a>, Error> {
+        let minor = check_header(header)?;
+        if len > MAX_PACK {
+            return Err(Error::TooLarge);
+        }
+        if len == PAGE {
+            return Ok(Tail {
+                t: &[],
+                count: 0,
+                minor,
+            });
+        }
+        if !len.is_multiple_of(PAGE) || tail.len() > len {
+            return Err(Error::NoFooter);
+        }
+        let toff = footer_trailer(tail.get(tail.len().wrapping_sub(FOOTER)..).unwrap_or(&[]), len)?;
+        if Some(toff) != len.checked_sub(tail.len()) {
+            return Err(Error::BadFooter);
+        }
+        let (count, _) = check_trailer(tail, toff, len)?;
+        Ok(Tail { t: tail, count, minor })
+    }
+}
+
+/// The trailer offset a footer states, checked against the committed length.
+fn footer_trailer(foot: &[u8], len: usize) -> Result<usize, Error> {
+    if foot.len() < FOOTER
+        || magic_of(foot) != MAGIC_FOOTER
+        || Some(crc32c(foot.get(..28).unwrap_or(&[]))) != Some(rd_u32(foot, 28))
+    {
+        return Err(Error::NoFooter);
+    }
+    let toff = rd_u64(foot, 8);
+    let tlen = rd_u64(foot, 16);
+    if !toff.is_multiple_of(PAGE as u64) || toff < PAGE as u64 || toff.checked_add(tlen) != Some(len as u64) {
+        return Err(Error::BadFooter);
+    }
+    usize_of(toff)
+}
+
+/// Checks the trailer `t` (at `toff`, through the footer: the last bytes of the `len` committed ones)
+/// and its entries; returns the count and minor version.
+fn check_trailer(t: &[u8], toff: usize, len: usize) -> Result<(usize, u16), Error> {
+    let tlen = len.wrapping_sub(toff) as u64;
+    if magic_of(t) != MAGIC_TRAILER || rd_u64(t, 8) != tlen {
+        return Err(Error::BadFooter);
+    }
+    if rd_u16(t, 4) != MAJOR {
+        return Err(Error::UnsupportedVersion);
+    }
+    let p = prefix(t)?;
+    let count = rd_u32(t, 24) as usize;
+    let need = count
+        .checked_mul(TRAILER_ENTRY)
+        .and_then(|v| v.checked_add(TRAILER_FIXED))
+        .ok_or(Error::BadTrailer)?;
+    let fits = need.checked_add(FOOTER).is_some_and(|v| v <= p.length);
+    if count > MAX_RECORDS || !fits || p.checked < need {
+        return Err(Error::BadTrailer);
+    }
+    if p.minor == 0 {
+        if p.checked != need || page_up((need as u64).wrapping_add(FOOTER as u64)) != Some(p.length as u64) {
+            return Err(Error::BadTrailer);
+        }
+        let foot = t.get(t.len().wrapping_sub(FOOTER)..).unwrap_or(&[]);
+        if rd_u32(t, 28) != 0 || rd_u32(foot, 4) != 0 || rd_u32(foot, 24) != 0 {
+            return Err(Error::ReservedNonZero);
+        }
+    }
+    let mut prev = PAGE as u64;
+    for i in 0..count {
+        prev = check_entry(&trailer_entry(t, i), prev, toff as u64)?;
+    }
+    Ok((count, p.minor))
+}
+
+/// A pack checked from its header and tail ([`Pack::check_tail`]): its trailer's entries.
+#[derive(Clone, Copy, Debug)]
+pub struct Tail<'a> {
+    t: &'a [u8],
+    count: usize,
+    minor: u16,
+}
+
+impl<'a> Tail<'a> {
+    /// Live records.
+    pub fn records(&self) -> usize {
+        self.count
+    }
+    /// The pack's minor version.
+    pub fn minor(&self) -> u16 {
+        self.minor
+    }
+    /// The trailer's entries, in file order.
+    pub fn entries(&self) -> impl Iterator<Item = IndexEntry> + 'a {
+        let t = self.t;
+        (0..self.count).map(move |i| trailer_entry(t, i))
+    }
+    /// As [`Pack::index`].
+    pub fn index(&self, out: &mut [IndexEntry]) -> Result<usize, Error> {
+        index_into(self.entries(), self.count, out)
+    }
+}
+
+impl<'a> Pack<'a> {
     /// The pack bytes.
     pub fn data(&self) -> &'a [u8] {
         self.data
@@ -202,15 +294,7 @@ impl<'a> Pack<'a> {
     /// Copies the trailer's entries into `out`, sorted by sample id, for [`find`]. Returns the
     /// number written; [`Error::BufferTooSmall`] if `out` holds fewer than [`Pack::records`].
     pub fn index(&self, out: &mut [IndexEntry]) -> Result<usize, Error> {
-        let dst = out.get_mut(..self.count).ok_or(Error::BufferTooSmall)?;
-        for (d, e) in dst.iter_mut().zip(self.entries()) {
-            *d = e;
-        }
-        sort(dst, |a, b| a.id < b.id);
-        if dst.windows(2).any(|w| matches!(w, [a, b] if a.id == b.id)) {
-            return Err(Error::DuplicateId);
-        }
-        Ok(self.count)
+        index_into(self.entries(), self.count, out)
     }
 
     /// Rebuilds the live set from the entries alone (records add, tombstones remove, in file
@@ -501,15 +585,39 @@ impl<'a> Record<'a> {
         Self::check(bytes, offset, true)
     }
 
+    /// The checks of [`Record::at`] (every header field, checksum, credit, frame table and the
+    /// agreement with `e`) on `head`, the record's first bytes (at least through its frame table,
+    /// for example its preload span): the header fields, without the rest of the record.
+    pub fn check_head(head: &[u8], e: &IndexEntry) -> Result<RecordInfo, Error> {
+        if !e.offset.is_multiple_of(PAGE as u64) || e.offset < PAGE as u64 {
+            return Err(Error::BadOffset);
+        }
+        let info = Self::check_in(head, usize_of(e.length)?, e.offset, true)?;
+        let preload = u64::from(info.head_len).wrapping_add(u64::from(info.window_bytes));
+        if info.id != e.id || preload != e.preload {
+            return Err(Error::Mismatch);
+        }
+        Ok(info)
+    }
+
     fn check(bytes: &'a [u8], offset: u64, full: bool) -> Result<Self, Error> {
+        let info = Self::check_in(bytes, bytes.len(), offset, full)?;
+        Ok(Self { bytes, info })
+    }
+
+    fn check_in(bytes: &[u8], length: usize, offset: u64, full: bool) -> Result<RecordInfo, Error> {
         if magic_of(bytes) != MAGIC_RECORD {
             return Err(Error::NotRecord);
         }
         if rd_u16(bytes, 4) != MAJOR {
             return Err(Error::UnsupportedVersion);
         }
-        let p = if full { prefix(bytes)? } else { prefix_fields(bytes)? };
-        if p.length != bytes.len() {
+        let p = if full {
+            prefix_in(bytes, length)?
+        } else {
+            prefix_fields_in(bytes, length)?
+        };
+        if p.length != length {
             return Err(Error::Mismatch);
         }
         if p.checked < RECORD_FIXED {
@@ -588,7 +696,7 @@ impl<'a> Record<'a> {
             ..info
         };
         if !full {
-            return Ok(Self { bytes, info });
+            return Ok(info);
         }
         let credit = b
             .get(RECORD_FIXED..RECORD_FIXED.wrapping_add(info.credit_len as usize))
@@ -615,7 +723,7 @@ impl<'a> Record<'a> {
         if prev != Some(info.frame_bytes) || lo != info.min_frame || hi != info.max_frame {
             return Err(Error::BadFrameTable);
         }
-        Ok(Self { bytes, info })
+        Ok(info)
     }
 
     /// The header fields.

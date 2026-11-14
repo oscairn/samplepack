@@ -102,6 +102,22 @@ static int pack_calls(const char *pack_path, const char *pcm_path) {
     if (sp_record_sample_id(p, len, &idx[pos], &vs, id2) != SP_OK || memcmp(id, id2, 32)) return 37;
     if (sp_record_verify(p, len, &idx[pos], &vs) != SP_OK) return 38;
     if (sp_pack_verify(p, len, &vs, idx, 4) != SP_OK) return 39;
+    /* the same from the parts a positional reader holds: header page, tail, record heads, frames */
+    {
+        sp_pack_info ti; sp_index_entry tidx[4]; sp_record_info hi; sp_flac_frame_info fi;
+        if (sp_pack_open(p, len, &pi) != SP_OK) return 49;
+        const size_t toff = (size_t)pi.trailer_offset;
+        if (sp_pack_tail_index(p, SP_PACK_PAGE, p + toff, len - toff, len, &ti, tidx, 1, &n) != SP_ERR_BUFFER_TOO_SMALL || n != 2) return 50;
+        if (sp_pack_tail_index(p, SP_PACK_PAGE, p + toff, len - toff, len, &ti, tidx, 4, &n) != SP_OK || n != 2 || ti.records != 2
+            || ti.trailer_offset != pi.trailer_offset || memcmp(tidx, idx, 2 * sizeof idx[0])) return 51;
+        if (sp_pack_tail_index(p, SP_PACK_PAGE, p + toff + SP_PACK_PAGE, len - toff - SP_PACK_PAGE, len, &ti, tidx, 4, &n) == SP_OK) return 52;
+        if (sp_record_head(p + idx[pos].offset, (size_t)idx[pos].preload, &idx[pos], &hi) != SP_OK || memcmp(&hi, &ri, sizeof hi)) return 53;
+        if (sp_record_head(p + idx[pos].offset, 100, &idx[pos], &hi) == SP_OK) return 54;
+        sp_index_entry other = idx[pos]; other.length += SP_PACK_PAGE;
+        if (sp_record_head(p + idx[pos].offset, (size_t)idx[pos].preload, &other, &hi) == SP_OK) return 55;
+        uint32_t t1 = 0, t2 = 0; memcpy(&t1, tb + 4, 4); memcpy(&t2, tb + 8, 4);
+        if (sp_flac_decode_frame(fr + t1, t2 - t1, 0, &fs, l, r, 8192, &fi) != SP_OK || fi.samples != ri.block_size || fi.consumed != t2 - t1) return 56;
+    }
     id[0] ^= 1;
     if (sp_index_find(idx, 2, id, &pos) != SP_ERR_NOT_FOUND) return 40;
     if (sp_pack_open(NULL, 5, &pi) != SP_ERR_INVALID_ARGUMENT || sp_pack_open(p, len, NULL) != SP_ERR_INVALID_ARGUMENT) return 41;

@@ -234,6 +234,28 @@ sp_status sp_index_find(const sp_index_entry *table, size_t count, const uint8_t
 sp_status sp_pack_record(const uint8_t *data, size_t len, const sp_index_entry *entry,
                          sp_record_info *info);
 
+/*
+ * Reading a pack without holding it whole (for example with positional reads):
+ *
+ * sp_pack_tail_index checks a pack as sp_pack_open does from `header` (its first SP_PACK_PAGE
+ * bytes) and `tail`, its bytes from the newest trailer through the end of the `len` committed
+ * bytes (the trailer offset is in the footer, the last 32 bytes), and fills `table` as
+ * sp_pack_index does (with SP_ERR_BUFFER_TOO_SMALL, *count is the number needed). A tail whose
+ * start is not the footer's trailer offset gives SP_ERR_BAD_FOOTER; SP_ERR_NO_FOOTER as for
+ * sp_pack_open. The trailer holds 56 bytes a record (count at most SP_PACK_MAX_RECORDS).
+ *
+ * sp_record_head makes the checks of sp_pack_record on `head`, the record's first head_len bytes
+ * (at least through its frame table, for example its preload span of entry->preload bytes),
+ * against `entry`, and describes the record. A frame of the record is then decoded with
+ * sp_flac_decode_frame from its bytes: frame i is [table[i], table[i + 1]) of the frames, which
+ * start head_len + window_bytes into the record.
+ */
+sp_status sp_pack_tail_index(const uint8_t *header, size_t header_len, const uint8_t *tail,
+                             size_t tail_len, uint64_t len, sp_pack_info *info,
+                             sp_index_entry *table, size_t capacity, size_t *count);
+sp_status sp_record_head(const uint8_t *head, size_t head_len, const sp_index_entry *entry,
+                         sp_record_info *info);
+
 /* The preload window: frames [0, window_frames), int16 little-endian interleaved, 4096-aligned
  * within the pack. *bytes may be 0 (no window). */
 sp_status sp_record_window(const uint8_t *data, size_t len, const sp_index_entry *entry,

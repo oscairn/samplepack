@@ -11,7 +11,7 @@ mod read;
 mod verify;
 mod write;
 
-pub use read::{find, find_position, recover, Entry, EntryIter, Pack, Record};
+pub use read::{find, find_position, recover, Entry, EntryIter, Pack, Record, Tail};
 pub use verify::{record_sample_id, verify_pack, verify_record, VerifyScratch};
 pub use write::{
     record_len, trailer_len, write_pack_header, write_record, write_tombstone, write_trailer, RecordParams,
