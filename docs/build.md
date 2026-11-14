@@ -64,8 +64,8 @@ different target directories, produced byte-identical `libsamplepack_capi.a` on 
 
 | Command | What it checks |
 | --- | --- |
-| `cargo test --workspace` | corpus against `flac -d` output, rejections, buffers, scan; hash test vectors; every pack rejection reason, torn-tail recovery at every byte, copies, ids; the CLI end to end (needs the `flac` tool, or `SAMPLEPACK_NO_FLAC=1` to skip those parts); header against library |
+| `cargo test --workspace` | corpus against `flac -d` output, rejections, buffers, scan; hash test vectors; every pack rejection reason, torn-tail recovery at every byte, copies, ids; the waveform worked example, every waveform refusal, corruption and truncation; the CLI end to end (needs the `flac` tool, or `SAMPLEPACK_NO_FLAC=1` to skip those parts); header against library |
 | `sh tools/check-no-panic.sh` | no panic machinery in the archive; a build whose panic handler needs a non-existent symbol still links (every C function is called) |
-| `sh tools/run-fuzz.sh [cases [seed [pack-cases]]]` | differential fuzz of the decoder against the C oracle, then the pack reader on mutated, truncated and spliced packs with a guard page after the mapping; ASan and UBSan |
+| `sh tools/run-fuzz.sh [cases [seed [pack-cases]]]` | differential fuzz of the decoder against the C oracle, then the pack reader on mutated, truncated and spliced packs, then the waveform reader on mutated waveforms, each with a guard page after the mapping; ASan and UBSan |
 | `sh tools/gate.sh` | callgrind instructions per sample, Rust against the oracle, aarch64 (needs docker and an aarch64 image with gcc and valgrind) |
 | `python3 tools/make-corpus.py` | regenerates `tests/data` with the stock `flac` encoder (needs `flac`) |
