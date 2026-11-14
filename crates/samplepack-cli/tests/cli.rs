@@ -569,3 +569,19 @@ fn waveform_from_wav() {
     std::fs::write(&f, w).unwrap();
     assert!(fails(bin().args(["waveform", "check"]).arg(&f)).contains("BadChecksum"));
 }
+
+/// A WAV file whose fmt chunk follows its data chunk packs to the same sample as the usual order.
+#[test]
+fn wav_fmt_after_data() {
+    let d = work("fmt-after-data");
+    let pcm = synth(500, 2);
+    let (a, b) = (d.join("a.wav"), d.join("b.wav"));
+    wav(&a, 44100, 2, &pcm);
+    let w = std::fs::read(&a).unwrap();
+    let mut moved = w[..12].to_vec();
+    moved.extend(&w[36..]); // data chunk
+    moved.extend(&w[12..36]); // fmt chunk
+    std::fs::write(&b, moved).unwrap();
+    let id = |f: &Path| ids_of(&run(bin().args(["pack", "-o"]).arg(f.with_extension("osp")).arg(f)))[0].clone();
+    assert_eq!(id(&a), id(&b));
+}
