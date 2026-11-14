@@ -317,42 +317,36 @@ pub fn find_position(index: &[IndexEntry], id: &SampleId) -> Option<usize> {
     None
 }
 
-/// Heap sort (in place, no allocation, no panic paths).
-fn sort<T: Copy>(v: &mut [T], less: impl Fn(&T, &T) -> bool) {
-    let n = v.len();
+/// Heap sort, in place. `core`'s sorts keep a panic path for an inconsistent comparison, which
+/// the no-panic check (`tools/check-no-panic.sh`) rejects.
+fn sort<T>(v: &mut [T], less: impl Fn(&T, &T) -> bool) {
+    let lt = |v: &[T], a: usize, b: usize| matches!((v.get(a), v.get(b)), (Some(x), Some(y)) if less(x, y));
+    // a < b
     let swap = |v: &mut [T], a: usize, b: usize| {
-        if let (Some(&x), Some(&y)) = (v.get(a), v.get(b)) {
-            if let Some(p) = v.get_mut(a) {
-                *p = y;
-            }
-            if let Some(p) = v.get_mut(b) {
-                *p = x;
-            }
+        if let Some([x, .., y]) = v.get_mut(a..=b) {
+            core::mem::swap(x, y);
         }
     };
-    let sift = |v: &mut [T], mut root: usize, end: usize| loop {
-        let l = root.wrapping_mul(2).wrapping_add(1);
-        if l >= end {
+    let sift = |v: &mut [T], mut root: usize| loop {
+        let mut c = root.wrapping_mul(2).wrapping_add(1);
+        if c >= v.len() {
             break;
         }
-        let r = l.wrapping_add(1);
-        let mut c = l;
-        if r < end && matches!((v.get(l), v.get(r)), (Some(a), Some(b)) if less(a, b)) {
-            c = r;
+        if lt(v, c, c.wrapping_add(1)) {
+            c = c.wrapping_add(1);
         }
-        if matches!((v.get(root), v.get(c)), (Some(a), Some(b)) if less(a, b)) {
-            swap(v, root, c);
-            root = c;
-        } else {
+        if !lt(v, root, c) {
             break;
         }
+        swap(v, root, c);
+        root = c;
     };
-    for i in (0..n / 2).rev() {
-        sift(v, i, n);
+    for i in (0..v.len() / 2).rev() {
+        sift(v, i);
     }
-    for end in (1..n).rev() {
+    for end in (1..v.len()).rev() {
         swap(v, 0, end);
-        sift(v, 0, end);
+        sift(v.get_mut(..end).unwrap_or(&mut []), 0);
     }
 }
 
@@ -753,5 +747,28 @@ impl<'a> Record<'a> {
             pos = pos.wrapping_add(want as usize);
         }
         Ok(pos)
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::indexing_slicing)]
+mod tests {
+    #[test]
+    fn sort_orders_every_length() {
+        let mut seed = 1u32;
+        for n in 0..70 {
+            let mut v = [0u32; 70];
+            for x in v.iter_mut().take(n) {
+                seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12345);
+                *x = seed >> 26; // few distinct values: many ties
+            }
+            let (sum, xor) = v.iter().fold((0u32, 0u32), |(s, x), &e| (s.wrapping_add(e), x ^ e));
+            super::sort(&mut v[..n], |a, b| a < b);
+            assert!(v[..n].windows(2).all(|w| w[0] <= w[1]), "length {n}");
+            assert_eq!(
+                v.iter().fold((0u32, 0u32), |(s, x), &e| (s.wrapping_add(e), x ^ e)),
+                (sum, xor)
+            );
+        }
     }
 }
