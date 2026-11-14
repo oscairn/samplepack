@@ -29,3 +29,7 @@ path = "hash.rs"
 [[test]]
 name = "pack"
 path = "pack.rs"
+
+[[test]]
+name = "waveform"
+path = "waveform.rs"
