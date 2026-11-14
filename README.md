@@ -43,11 +43,8 @@ caller's memory, sized as below, or stack; nothing grows with use or over time.
 | Verifying, computing a record's id | 65,536 bytes of scratch (`sp_verify_scratch`, which contains a decode scratch) |
 | A record description | 128 bytes (`sp_record_info`), optional |
 
-Stack: at most 2,576 bytes for any C function (the largest is `sp_record_sample_id`), plus the C
-library's `memcpy`, `memcmp` and `bzero`. Measured from the release static library's machine code on
-arm64 macOS with the pinned compiler, by adding frame sizes along the call graph; there is no
-recursion and no frame of variable size. Other targets and compilers give other numbers, and no check
-enforces this one.
+Stack: a few kilobytes for any C function (plus the C library's `memcpy`, `memcmp` and `bzero`);
+there is no recursion and no frame of variable size.
 
 ## Licence
 

@@ -12,7 +12,7 @@
  *  - Lengths and counts are in elements, not bytes, unless stated.
  *  - Memory: besides the caller's buffers (a pack mapping, 56 bytes per index entry, 32 KiB of
  *    sp_flac_scratch to decode, 64 KiB of sp_verify_scratch to verify) a call uses only stack,
- *    under 3 KiB on arm64 (README.md, "Memory"). Nothing grows between calls.
+ *    a few kilobytes, without recursion (README.md, "Memory"). Nothing grows between calls.
  */
 #ifndef SAMPLEPACK_H
 #define SAMPLEPACK_H

@@ -20,27 +20,27 @@ Cortex-A53 pipeline.
 Compiler: rustc 1.95.0 (pinned), gcc 13.3 for the oracle. Instructions per sample, oracle / Rust:
 
 ```
-all (82 files) | nocrc: oracle 28.43 rust 27.31 ips (-3.9%) | crc: oracle 36.66 rust 33.51 ips (-8.6%)
--l 0 (12 files) | nocrc: oracle 27.93 rust 27.68 ips (-0.9%) | crc: oracle 36.79 rust 34.34 ips (-6.7%)
--l 4 (38 files) | nocrc: oracle 26.01 rust 25.35 ips (-2.5%) | crc: oracle 33.75 rust 31.17 ips (-7.6%)
--l 8 (25 files) | nocrc: oracle 31.51 rust 29.49 ips (-6.4%) | crc: oracle 40.05 rust 35.91 ips (-10.3%)
-mono (10 files) | nocrc: oracle 24.79 rust 24.53 ips (-1.0%) | crc: oracle 31.14 rust 29.33 ips (-5.8%)
-sweep stereo (11 files) | nocrc: oracle 35.08 rust 34.37 ips (-2.0%) | crc: oracle 41.72 rust 39.37 ips (-5.6%)
-noise stereo (12 files) | nocrc: oracle 23.99 rust 17.63 ips (-26.5%) | crc: oracle 40.09 rust 29.73 ips (-25.8%)
-colored stereo (12 files) | nocrc: oracle 33.17 rust 32.24 ips (-2.8%) | crc: oracle 45.25 rust 41.32 ips (-8.7%)
-correlated stereo (11 files) | nocrc: oracle 36.28 rust 35.39 ips (-2.4%) | crc: oracle 43.28 rust 40.66 ips (-6.1%)
-clipped stereo (11 files) | nocrc: oracle 31.60 rust 32.85 ips (+4.0%) | crc: oracle 39.63 rust 38.89 ips (-1.9%)
+all (82 files) | nocrc: oracle 28.43 rust 27.25 ips (-4.1%) | crc: oracle 36.66 rust 33.45 ips (-8.8%)
+-l 0 (12 files) | nocrc: oracle 27.93 rust 27.62 ips (-1.1%) | crc: oracle 36.79 rust 34.28 ips (-6.8%)
+-l 4 (38 files) | nocrc: oracle 26.01 rust 25.29 ips (-2.8%) | crc: oracle 33.75 rust 31.11 ips (-7.8%)
+-l 8 (25 files) | nocrc: oracle 31.51 rust 29.43 ips (-6.6%) | crc: oracle 40.05 rust 35.85 ips (-10.5%)
+mono (10 files) | nocrc: oracle 24.79 rust 24.58 ips (-0.8%) | crc: oracle 31.14 rust 29.38 ips (-5.6%)
+sweep stereo (11 files) | nocrc: oracle 35.08 rust 34.30 ips (-2.2%) | crc: oracle 41.72 rust 39.30 ips (-5.8%)
+noise stereo (12 files) | nocrc: oracle 23.99 rust 17.57 ips (-26.7%) | crc: oracle 40.09 rust 29.67 ips (-26.0%)
+colored stereo (12 files) | nocrc: oracle 33.17 rust 32.18 ips (-3.0%) | crc: oracle 45.25 rust 41.26 ips (-8.8%)
+correlated stereo (11 files) | nocrc: oracle 36.28 rust 35.32 ips (-2.6%) | crc: oracle 43.28 rust 40.60 ips (-6.2%)
+clipped stereo (11 files) | nocrc: oracle 31.60 rust 32.79 ips (+3.8%) | crc: oracle 39.63 rust 38.83 ips (-2.0%)
 ```
 
 The same on the three subset streams embedded in the oracle's own unit bench (a 6 s stereo synthetic
-signal; 529,200 samples each):
+signal; 529,200 samples each; not re-run with the current code):
 
 ```
 all (3 files) | nocrc: oracle 33.94 rust 32.61 ips (-3.9%) | crc: oracle 38.67 rust 36.16 ips (-6.5%)
 ```
 
-Without CRC every group is within +5%: the worst is the clipped-signal group (+4.0%), the aggregate is
--3.9%. The Rust decoder is cheaper than the oracle on noise (verbatim and escaped residuals) and
+Without CRC every group is within +5%: the worst is the clipped-signal group (+3.8%), the aggregate is
+-4.1%. The Rust decoder is cheaper than the oracle on noise (verbatim and escaped residuals) and
 with CRC checking; the reasons were not investigated.
 
 ## History
