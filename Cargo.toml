@@ -1,0 +1,36 @@
+[workspace]
+resolver = "2"
+members = ["crates/samplepack"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-or-later"
+rust-version = "1.95"
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+indexing_slicing = "deny"
+arithmetic_side_effects = "deny"
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+panic_in_result_fn = "deny"
+unreachable = "deny"
+todo = "deny"
+unimplemented = "deny"
+string_slice = "deny"
+get_unwrap = "deny"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+debug = false
+
+[profile.dev]
+panic = "abort"

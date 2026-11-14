@@ -1,0 +1,13 @@
+[package]
+name = "samplepack"
+description = "Reader for sample packs: bounds-checked decoder for a restricted subset of FLAC frames"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lib]
+crate-type = ["rlib"]
+
+[lints]
+workspace = true
