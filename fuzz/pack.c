@@ -8,8 +8,8 @@
 // mutated cases get their entry and footer checksums recomputed, so the mutations reach the
 // field checks behind them. Checks per case: no crash or abort; every returned pointer lies
 // inside the mapping; anything sp_record_verify accepts decodes completely without CRC checks;
-// anything sp_pack_verify accepts has every record verify; record calls with a damaged
-// sp_record_info return an error or stay inside the mapping.
+// anything sp_pack_verify accepts has every record verify; the constant-time record calls, with
+// every listed entry and a damaged copy of it, return an error or stay inside the mapping.
 #define _DEFAULT_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
@@ -97,36 +97,38 @@ static void one(const uint8_t *src, size_t len) {
         sp_pack_rebuild_index(d, L, idx2, MAXIDX, &m);
         if (is != SP_OK) n = 0;
         for (size_t i = 0; i < n && i < 64; i++) {
+            // the constant-time record calls on the entry as listed, and on a damaged copy of it:
+            // errors, or pointers inside the mapping, whatever the record's header holds
+            sp_index_entry e[2] = { idx[i], idx[i] };
+            switch (rnd() % 4) {
+            case 0: e[1].offset += (uint64_t)(rnd() % 5) * SP_PACK_PAGE - 2 * SP_PACK_PAGE; break;
+            case 1: e[1].length = rnd() % 3 == 0 ? UINT64_MAX : (uint64_t)(rnd() % 64) * SP_PACK_PAGE; break;
+            case 2: e[1].preload = (uint64_t)(rnd() % 8) * SP_PACK_PAGE; break;
+            case 3: e[1].id[rnd() % 32] ^= 1; break;
+            }
+            for (int k = 0; k < 2; k++) {
+                const uint8_t *w, *f, *t; size_t wb, fl, te; uint64_t got;
+                if (sp_record_window(d, L, &e[k], &w, &wb) == SP_OK && !inside(w, wb, d, L)) die("window outside", len);
+                if (sp_record_frames(d, L, &e[k], &f, &fl, &t, &te) == SP_OK && (!inside(f, fl, d, L) || !inside(t, te * 4, d, L))) die("frames outside", len);
+                sp_record_decode(d, L, &e[k], rnd() % 8, rnd() % 8, rnd() & 1, &fs, c0, c1, 1 << 20, &got);
+            }
             sp_record_info ri;
             if (sp_pack_record(d, L, &idx[i], &ri) != SP_OK) continue;
             records_seen++;
-            const uint8_t *w, *f, *t; size_t wb, fl, te;
-            if (sp_record_window(d, L, &ri, &w, &wb) == SP_OK && !inside(w, wb, d, L)) die("window outside", len);
-            if (sp_record_frames(d, L, &ri, &f, &fl, &t, &te) == SP_OK && (!inside(f, fl, d, L) || !inside(t, te * 4, d, L))) die("frames outside", len);
-            if (sp_record_verify(d, L, &ri, &vs) == SP_OK) {
+            if (sp_record_verify(d, L, &idx[i], &vs) == SP_OK) {
                 verified++;
                 uint64_t got = 0;
-                if (ri.frames > (1u << 20) || sp_record_decode(d, L, &ri, 0, ri.blocks, 0, &fs, c0, c1, 1 << 20, &got) != SP_OK || got != ri.frames)
+                if (ri.frames > (1u << 20) || sp_record_decode(d, L, &idx[i], 0, ri.blocks, 0, &fs, c0, c1, 1 << 20, &got) != SP_OK || got != ri.frames)
                     die("verified record does not decode", len);
                 uint8_t id[32];
-                if (sp_record_sample_id(d, L, &ri, &vs, id) != SP_OK || memcmp(id, ri.id, 32)) die("verified record id", len);
+                if (sp_record_sample_id(d, L, &idx[i], &vs, id) != SP_OK || memcmp(id, ri.id, 32)) die("verified record id", len);
             }
-            // a damaged handle: errors, or stays inside the mapping
-            sp_record_info bad_ri = ri;
-            uint32_t *fld = (uint32_t *)((uint8_t *)&bad_ri + 80);
-            fld[rnd() % 12] = rnd() % 3 == 0 ? 0xFFFFFFFFu : rnd() % 70000;
-            if (rnd() & 1) bad_ri.offset += (uint64_t)(rnd() % 3) * SP_PACK_PAGE;
-            if (sp_record_window(d, L, &bad_ri, &w, &wb) == SP_OK && !inside(w, wb, d, L)) die("damaged handle window", len);
-            if (sp_record_frames(d, L, &bad_ri, &f, &fl, &t, &te) == SP_OK && (!inside(f, fl, d, L) || !inside(t, te * 4, d, L))) die("damaged handle frames", len);
-            uint64_t got;
-            sp_record_decode(d, L, &bad_ri, rnd() % 8, rnd() % 8, rnd() & 1, &fs, c0, c1, 1 << 20, &got);
         }
         if ((cases & 7) == 0 && sp_pack_verify(d, L, &vs, idx, MAXIDX) == SP_OK) {
             packs_verified++;
             if (sp_pack_index(d, L, idx, MAXIDX, &n) != SP_OK) die("verified pack has no index", len);
             for (size_t i = 0; i < n; i++) {
-                sp_record_info ri;
-                if (sp_pack_record(d, L, &idx[i], &ri) != SP_OK || sp_record_verify(d, L, &ri, &vs) != SP_OK) die("verified pack, record fails", len);
+                if (sp_record_verify(d, L, &idx[i], &vs) != SP_OK) die("verified pack, record fails", len);
             }
         }
     }

@@ -25,6 +25,15 @@ fn magic_of(d: &[u8]) -> [u8; 4] {
 /// Validates the prefix of the entry at the start of `d`, where `d` runs to the end of the region
 /// the entry must fit in. The major version is the caller's to check.
 pub(crate) fn prefix(d: &[u8]) -> Result<Prefix, Error> {
+    let p = prefix_fields(d)?;
+    if entry_crc(d, p.checked) != Some(rd_u32(d, 20)) {
+        return Err(Error::BadChecksum);
+    }
+    Ok(p)
+}
+
+/// [`prefix`] without the checksum.
+fn prefix_fields(d: &[u8]) -> Result<Prefix, Error> {
     if d.len() < PREFIX {
         return Err(Error::BadEntry);
     }
@@ -33,9 +42,6 @@ pub(crate) fn prefix(d: &[u8]) -> Result<Prefix, Error> {
     let length = usize::try_from(length).map_err(|_| Error::BadEntry)?;
     if length < PAGE || !length.is_multiple_of(PAGE) || length > d.len() || checked < PREFIX || checked > length {
         return Err(Error::BadEntry);
-    }
-    if entry_crc(d, checked) != Some(rd_u32(d, 20)) {
-        return Err(Error::BadChecksum);
     }
     Ok(Prefix {
         minor: rd_u16(d, 6),
@@ -468,13 +474,24 @@ fn is_block_size(b: u32) -> bool {
 impl<'a> Record<'a> {
     /// The record `e` points at in `data` (the pack up to its trailer).
     pub fn at(data: &'a [u8], e: &IndexEntry) -> Result<Self, Error> {
+        Self::locate(data, e, true)
+    }
+
+    /// As [`Record::at`], but without the checks an earlier `at` of the same entry made over
+    /// the whole head (checksum, credit, frame table): constant time, for repeated access
+    /// through the C interface. Every other header field is still checked.
+    pub fn reopen(data: &'a [u8], e: &IndexEntry) -> Result<Self, Error> {
+        Self::locate(data, e, false)
+    }
+
+    fn locate(data: &'a [u8], e: &IndexEntry, full: bool) -> Result<Self, Error> {
         if !e.offset.is_multiple_of(PAGE as u64) || e.offset < PAGE as u64 {
             return Err(Error::BadOffset);
         }
         let start = usize_of(e.offset)?;
         let end = start.checked_add(usize_of(e.length)?).ok_or(Error::BadOffset)?;
         let bytes = data.get(start..end).ok_or(Error::BadOffset)?;
-        let r = Self::parse(bytes, e.offset)?;
+        let r = Self::check(bytes, e.offset, full)?;
         if r.info.id != e.id || r.preload() != e.preload {
             return Err(Error::Mismatch);
         }
@@ -483,13 +500,17 @@ impl<'a> Record<'a> {
 
     /// Checks the header of the record that is exactly `bytes`, found at `offset` in its pack.
     pub fn parse(bytes: &'a [u8], offset: u64) -> Result<Self, Error> {
+        Self::check(bytes, offset, true)
+    }
+
+    fn check(bytes: &'a [u8], offset: u64, full: bool) -> Result<Self, Error> {
         if magic_of(bytes) != MAGIC_RECORD {
             return Err(Error::NotRecord);
         }
         if rd_u16(bytes, 4) != MAJOR {
             return Err(Error::UnsupportedVersion);
         }
-        let p = prefix(bytes)?;
+        let p = if full { prefix(bytes)? } else { prefix_fields(bytes)? };
         if p.length != bytes.len() {
             return Err(Error::Mismatch);
         }
@@ -564,6 +585,13 @@ impl<'a> Record<'a> {
         {
             return Err(Error::BadLayout);
         }
+        let info = RecordInfo {
+            table_offset: table_off as u32,
+            ..info
+        };
+        if !full {
+            return Ok(Self { bytes, info });
+        }
         let credit = b
             .get(RECORD_FIXED..RECORD_FIXED.wrapping_add(info.credit_len as usize))
             .unwrap_or(&[]);
@@ -589,47 +617,7 @@ impl<'a> Record<'a> {
         if prev != Some(info.frame_bytes) || lo != info.min_frame || hi != info.max_frame {
             return Err(Error::BadFrameTable);
         }
-        Ok(Self {
-            bytes,
-            info: RecordInfo {
-                table_offset: table_off as u32,
-                ..info
-            },
-        })
-    }
-
-    /// Rebuilds a record from a [`RecordInfo`] that [`Record::parse`] produced earlier (the C
-    /// interface's handle), checking only that its fields are consistent with each other and lie
-    /// inside `data`. The header checksum and frame table are not re-read.
-    pub fn from_info(data: &'a [u8], info: &RecordInfo) -> Result<Self, Error> {
-        let bad = Error::InvalidArgument;
-        let start = usize::try_from(info.offset).map_err(|_| bad)?;
-        let len = usize::try_from(info.length).map_err(|_| bad)?;
-        let bytes = data.get(start..start.checked_add(len).ok_or(bad)?).ok_or(bad)?;
-        if magic_of(bytes) != MAGIC_RECORD {
-            return Err(Error::NotRecord);
-        }
-        let i = info;
-        let wide = |v: u32| u64::from(v);
-        let table_end = wide(i.blocks)
-            .checked_add(1)
-            .map(|v| v.wrapping_mul(4).wrapping_add(wide(i.table_offset)));
-        let ok = (1..=2).contains(&i.channels)
-            && is_block_size(i.block_size)
-            && i.blocks >= 1
-            && wide(i.frames) <= wide(i.blocks).wrapping_mul(wide(i.block_size))
-            && wide(i.frames) > wide(i.blocks).wrapping_sub(1).wrapping_mul(wide(i.block_size))
-            && wide(i.head_len)
-                .wrapping_add(wide(i.window_bytes))
-                .wrapping_add(wide(i.frame_bytes))
-                <= info.length
-            && table_end.is_some_and(|e| e <= wide(i.head_len))
-            && wide(i.window_frames).wrapping_mul(wide(i.channels)).wrapping_mul(2) <= wide(i.window_bytes)
-            && wide(i.credit_offset).wrapping_add(wide(i.credit_len)) <= wide(i.head_len);
-        if !ok {
-            return Err(bad);
-        }
-        Ok(Self { bytes, info: *info })
+        Ok(Self { bytes, info })
     }
 
     /// The header fields.

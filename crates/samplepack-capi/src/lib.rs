@@ -427,11 +427,13 @@ pub unsafe extern "C" fn sp_pack_record(
     pcode(run())
 }
 
+/// The record an index entry points at, re-read from the pack in constant time.
+///
 /// # Safety
 /// Pointers must be valid as documented in the header.
-unsafe fn record<'a>(data: *const u8, len: usize, info: *const RecordInfo) -> Result<Record<'a>, pack::Error> {
+unsafe fn record<'a>(data: *const u8, len: usize, entry: *const IndexEntry) -> Result<Record<'a>, pack::Error> {
     // SAFETY: forwarded caller contract.
-    unsafe { Record::from_info(pack_bytes(data, len)?, in_ref(info)?) }
+    unsafe { Record::reopen(pack_bytes(data, len)?, in_ref(entry)?) }
 }
 
 /// The preload window of a record; see `samplepack.h`.
@@ -442,7 +444,7 @@ unsafe fn record<'a>(data: *const u8, len: usize, info: *const RecordInfo) -> Re
 pub unsafe extern "C" fn sp_record_window(
     data: *const u8,
     len: usize,
-    info: *const RecordInfo,
+    entry: *const IndexEntry,
     window: *mut *const u8,
     bytes: *mut usize,
 ) -> i32 {
@@ -451,7 +453,7 @@ pub unsafe extern "C" fn sp_record_window(
         let (w, b) = (out_ref(window)?, out_ref(bytes)?);
         *w = core::ptr::null();
         *b = 0;
-        let s = record(data, len, info)?.window();
+        let s = record(data, len, entry)?.window();
         *w = s.as_ptr();
         *b = s.len();
         Ok(())
@@ -467,7 +469,7 @@ pub unsafe extern "C" fn sp_record_window(
 pub unsafe extern "C" fn sp_record_frames(
     data: *const u8,
     len: usize,
-    info: *const RecordInfo,
+    entry: *const IndexEntry,
     frames: *mut *const u8,
     frames_len: *mut usize,
     table: *mut *const u8,
@@ -482,7 +484,7 @@ pub unsafe extern "C" fn sp_record_frames(
             out_ref(table_entries)?,
         );
         (*f, *fl, *t, *tl) = (core::ptr::null(), 0, core::ptr::null(), 0);
-        let r = record(data, len, info)?;
+        let r = record(data, len, entry)?;
         let (fs, ts) = (r.frames(), r.frame_table());
         (*f, *fl, *t, *tl) = (fs.as_ptr(), fs.len(), ts.as_ptr(), ts.len() / 4);
         Ok(())
@@ -498,7 +500,7 @@ pub unsafe extern "C" fn sp_record_frames(
 pub unsafe extern "C" fn sp_record_decode(
     data: *const u8,
     len: usize,
-    info: *const RecordInfo,
+    entry: *const IndexEntry,
     first_block: u32,
     blocks: u32,
     flags: u32,
@@ -512,7 +514,7 @@ pub unsafe extern "C" fn sp_record_decode(
     let run = || unsafe {
         let fw = out_ref(frames_written)?;
         *fw = 0;
-        let r = record(data, len, info)?;
+        let r = record(data, len, entry)?;
         let bad = |_| pack::Error::InvalidArgument;
         let (o0, o1) = (
             output(ch0, capacity, usize::MAX).map_err(bad)?,
@@ -571,7 +573,7 @@ fn verify_scratch<'a>(p: *mut VerifyScratch) -> Result<&'a mut VerifyScratch, pa
 pub unsafe extern "C" fn sp_record_sample_id(
     data: *const u8,
     len: usize,
-    info: *const RecordInfo,
+    entry: *const IndexEntry,
     vs: *mut VerifyScratch,
     id: *mut SampleId,
 ) -> i32 {
@@ -579,7 +581,8 @@ pub unsafe extern "C" fn sp_record_sample_id(
     let run = || unsafe {
         let out = out_ref(id)?;
         *out = [0; 32];
-        *out = pack::record_sample_id(&record(data, len, info)?, verify_scratch(vs)?)?;
+        let r = Record::at(pack_bytes(data, len)?, in_ref(entry)?)?;
+        *out = pack::record_sample_id(&r, verify_scratch(vs)?)?;
         Ok(())
     };
     pcode(run())
@@ -593,14 +596,12 @@ pub unsafe extern "C" fn sp_record_sample_id(
 pub unsafe extern "C" fn sp_record_verify(
     data: *const u8,
     len: usize,
-    info: *const RecordInfo,
+    entry: *const IndexEntry,
     vs: *mut VerifyScratch,
 ) -> i32 {
     // SAFETY: forwarded caller contract.
     let run = || unsafe {
-        let r = record(data, len, info)?;
-        // Re-check the header in full: the info struct is the caller's memory.
-        let r = Record::at(pack_bytes(data, len)?, &r.entry())?;
+        let r = Record::at(pack_bytes(data, len)?, in_ref(entry)?)?;
         pack::verify_record(&r, verify_scratch(vs)?)
     };
     pcode(run())

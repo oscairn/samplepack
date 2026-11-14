@@ -362,8 +362,8 @@ The reader is the single parser of untrusted pack files for its host and plugin.
   safety;
 - decode FLAC frames only with a decoder whose reads are bounded by the frame slice (the subset
   decoder in this library is);
-- treat a structure passed back by its caller (`sp_record_info`) as untrusted too: the library
-  re-checks it against the pack before every use.
+- treat an index entry passed in by its caller (`sp_index_entry`) as untrusted too: the library
+  re-reads the record header it points at and checks their agreement on every call.
 
 The reference library is `no_std`, allocation-free, `unsafe`-free (the C interface excepted), and
 panic-free: a build whose panic handler cannot link still links (`tools/check-no-panic.sh`).
@@ -498,7 +498,7 @@ decoder code is returned.
 
 | Code | Name | Meaning |
 | --- | --- | --- |
-| 1 | `INVALID_ARGUMENT` | bad pointer or argument; inconsistent writer input; a damaged `sp_record_info` |
+| 1 | `INVALID_ARGUMENT` | bad pointer or argument; inconsistent writer input |
 | 2 | `BUFFER_TOO_SMALL` | an output or index buffer is too small (the needed count is reported) |
 | 32 | `NOT_PACK` | shorter than one page, or no `OSPH` magic |
 | 33 | `UNSUPPORTED_VERSION` | major version other than 1 |

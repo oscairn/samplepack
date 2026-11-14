@@ -20,7 +20,7 @@ cat > "$T/m.c" <<'EOC'
 static sp_flac_scratch s; static sp_verify_scratch v; static int16_t l[4096], r[4096]; static uint8_t d[8192];
 int main(void) {
     sp_flac_frame_info i; sp_flac_frame_entry t[4]; sp_flac_scan_summary u; uint64_t o;
-    sp_pack_info pi; sp_index_entry ix[4]; sp_record_info ri = {0}; size_t n; uint8_t id[32] = {0};
+    sp_pack_info pi; sp_index_entry ix[4] = {0}; sp_record_info ri; size_t n; uint8_t id[32] = {0};
     const uint8_t *p1, *p2; size_t z1, z2;
     int st = sp_flac_decode_frame(d, sizeof d, 1, &s, l, r, 4096, &i);
     st += sp_flac_scan(d, sizeof d, 1, &s, t, 4, &u);
@@ -31,12 +31,12 @@ int main(void) {
     st += sp_pack_rebuild_index(d, sizeof d, ix, 4, &n);
     st += sp_index_find(ix, 4, id, &n);
     st += sp_pack_record(d, sizeof d, ix, &ri);
-    st += sp_record_window(d, sizeof d, &ri, &p1, &z1);
-    st += sp_record_frames(d, sizeof d, &ri, &p1, &z1, &p2, &z2);
-    st += sp_record_decode(d, sizeof d, &ri, 0, 1, 0, &s, l, r, 4096, &o);
+    st += sp_record_window(d, sizeof d, ix, &p1, &z1);
+    st += sp_record_frames(d, sizeof d, ix, &p1, &z1, &p2, &z2);
+    st += sp_record_decode(d, sizeof d, ix, 0, 1, 0, &s, l, r, 4096, &o);
     st += sp_sample_id_pcm(44100, 2, l, 2048, id);
-    st += sp_record_sample_id(d, sizeof d, &ri, &v, id);
-    st += sp_record_verify(d, sizeof d, &ri, &v);
+    st += sp_record_sample_id(d, sizeof d, ix, &v, id);
+    st += sp_record_verify(d, sizeof d, ix, &v);
     st += sp_pack_verify(d, sizeof d, &v, ix, 4);
     printf("%d\n", st); return 0;
 }

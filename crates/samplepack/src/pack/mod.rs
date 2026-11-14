@@ -186,8 +186,8 @@ pub struct IndexEntry {
     pub preload: u64,
 }
 
-/// What [`Record`] knows about a record, all taken from its validated header. The C interface
-/// hands this struct out and takes it back; the library re-checks it against the pack on use.
+/// What [`Record`] knows about a record, all taken from its validated header (`sp_record_info`
+/// in the C interface).
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct RecordInfo {

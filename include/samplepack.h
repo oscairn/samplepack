@@ -154,8 +154,7 @@ typedef struct sp_pack_info {
     uint32_t reserved;       /* zero */
 } sp_pack_info;
 
-/* A record's header fields (filled by sp_pack_record; passed back to the sp_record_* calls, which
- * re-check it against the pack, so a damaged struct gives an error, never an out-of-bounds read). */
+/* A record's header fields, as sp_pack_record found them. */
 typedef struct sp_record_info {
     uint64_t offset, length;
     uint8_t id[SP_SAMPLE_ID_BYTES]; /* as stated; trusted only after sp_record_verify */
@@ -197,25 +196,31 @@ sp_status sp_index_find(const sp_index_entry *table, size_t count, const uint8_t
                         size_t *position);
 
 /* Check the header of the record an entry points at (CRC-32C, every field, the frame table) and
- * describe it. No audio is decoded. */
+ * describe it. No audio is decoded.
+ *
+ * The sp_record_* calls below take the same index entry and re-read the record's header from the
+ * pack on every call. sp_record_window, sp_record_frames and sp_record_decode do it in constant
+ * time: every header field and its agreement with the entry is checked again, the CRC-32C, credit
+ * and frame table only by sp_pack_record. A damaged entry gives an error, never a read outside
+ * data[0..len). */
 sp_status sp_pack_record(const uint8_t *data, size_t len, const sp_index_entry *entry,
                          sp_record_info *info);
 
 /* The preload window: frames [0, window_frames), int16 little-endian interleaved, 4096-aligned
  * within the pack. *bytes may be 0 (no window). */
-sp_status sp_record_window(const uint8_t *data, size_t len, const sp_record_info *info,
+sp_status sp_record_window(const uint8_t *data, size_t len, const sp_index_entry *entry,
                            const uint8_t **window, size_t *bytes);
 
 /* The FLAC frames (one stream) and the frame table: table_entries (= blocks + 1) little-endian
  * uint32 offsets into the frames. */
-sp_status sp_record_frames(const uint8_t *data, size_t len, const sp_record_info *info,
+sp_status sp_record_frames(const uint8_t *data, size_t len, const sp_index_entry *entry,
                            const uint8_t **frames, size_t *frames_len, const uint8_t **table,
                            size_t *table_entries);
 
 /* Decode blocks [first_block, first_block + blocks) into ch0 (and ch1 for stereo), contiguously;
  * each needs capacity for every frame of the range. flags: 0 at play time, or SP_FLAC_CHECK_CRC.
  * On an error the outputs may hold the blocks decoded before it. */
-sp_status sp_record_decode(const uint8_t *data, size_t len, const sp_record_info *info,
+sp_status sp_record_decode(const uint8_t *data, size_t len, const sp_index_entry *entry,
                            uint32_t first_block, uint32_t blocks, uint32_t flags,
                            sp_flac_scratch *scratch, int16_t *ch0, int16_t *ch1, size_t capacity,
                            uint64_t *frames_written);
@@ -224,13 +229,14 @@ sp_status sp_record_decode(const uint8_t *data, size_t len, const sp_record_info
 sp_status sp_sample_id_pcm(uint32_t rate, uint32_t channels, const int16_t *pcm, size_t frames,
                            uint8_t id[SP_SAMPLE_ID_BYTES]);
 
-/* Sample id computed from a record's decoded audio (decodes every frame, CRCs checked). */
-sp_status sp_record_sample_id(const uint8_t *data, size_t len, const sp_record_info *info,
+/* Sample id computed from a record's decoded audio (header checked as by sp_pack_record, then
+ * every frame decoded, CRCs checked). */
+sp_status sp_record_sample_id(const uint8_t *data, size_t len, const sp_index_entry *entry,
                               sp_verify_scratch *scratch, uint8_t id[SP_SAMPLE_ID_BYTES]);
 
 /* Full verification of one record: header, padding, every frame (CRCs, numbering, block sizes),
  * window, MD5 and recomputed sample id. Required before a record is installed or trusted. */
-sp_status sp_record_verify(const uint8_t *data, size_t len, const sp_record_info *info,
+sp_status sp_record_verify(const uint8_t *data, size_t len, const sp_index_entry *entry,
                            sp_verify_scratch *scratch);
 
 /* Full verification of a whole pack: sp_pack_open, every entry, the rebuilt live set equal to the

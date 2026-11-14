@@ -89,21 +89,21 @@ static int pack_calls(const char *pack_path, const char *pcm_path) {
     if (sp_pack_record(p, len, &idx[pos], &ri) != SP_OK || ri.frames != 5000 || ri.channels != 2 || ri.window_frames != 4096 || ri.credit_len != 8) return 29;
     if (memcmp(p + ri.offset + ri.credit_offset, "abi test", 8)) return 30;
     const uint8_t *w = NULL, *fr = NULL, *tb = NULL; size_t wb = 0, fl = 0, te = 0;
-    if (sp_record_window(p, len, &ri, &w, &wb) != SP_OK || wb != 4096 * 4 || (size_t)(w - p) % SP_PACK_PAGE || memcmp(w, pcm, wb)) return 31;
-    if (sp_record_frames(p, len, &ri, &fr, &fl, &tb, &te) != SP_OK || te != ri.blocks + 1 || fl != ri.frame_bytes) return 32;
+    if (sp_record_window(p, len, &idx[pos], &w, &wb) != SP_OK || wb != 4096 * 4 || (size_t)(w - p) % SP_PACK_PAGE || memcmp(w, pcm, wb)) return 31;
+    if (sp_record_frames(p, len, &idx[pos], &fr, &fl, &tb, &te) != SP_OK || te != ri.blocks + 1 || fl != ri.frame_bytes) return 32;
     uint64_t got = 0;
-    if (sp_record_decode(p, len, &ri, 0, ri.blocks, 0, &fs, l, r, 8192, &got) != SP_OK || got != 5000) return 33;
+    if (sp_record_decode(p, len, &idx[pos], 0, ri.blocks, 0, &fs, l, r, 8192, &got) != SP_OK || got != 5000) return 33;
     for (int i = 0; i < 5000; i++) { int16_t a, b; memcpy(&a, pcm + 4 * i, 2); memcpy(&b, pcm + 4 * i + 2, 2); if (l[i] != a || r[i] != b) return 34; }
-    if (sp_record_decode(p, len, &ri, 4, 2, 0, &fs, l, r, 8192, &got) != SP_ERR_INVALID_ARGUMENT) return 35;
-    if (sp_record_decode(p, len, &ri, 0, 2, 0, &fs, l, r, 100, &got) != SP_ERR_BUFFER_TOO_SMALL) return 36;
-    if (sp_record_sample_id(p, len, &ri, &vs, id2) != SP_OK || memcmp(id, id2, 32)) return 37;
-    if (sp_record_verify(p, len, &ri, &vs) != SP_OK) return 38;
+    if (sp_record_decode(p, len, &idx[pos], 4, 2, 0, &fs, l, r, 8192, &got) != SP_ERR_INVALID_ARGUMENT) return 35;
+    if (sp_record_decode(p, len, &idx[pos], 0, 2, 0, &fs, l, r, 100, &got) != SP_ERR_BUFFER_TOO_SMALL) return 36;
+    if (sp_record_sample_id(p, len, &idx[pos], &vs, id2) != SP_OK || memcmp(id, id2, 32)) return 37;
+    if (sp_record_verify(p, len, &idx[pos], &vs) != SP_OK) return 38;
     if (sp_pack_verify(p, len, &vs, idx, 4) != SP_OK) return 39;
     id[0] ^= 1;
     if (sp_index_find(idx, 2, id, &pos) != SP_ERR_NOT_FOUND) return 40;
     if (sp_pack_open(NULL, 5, &pi) != SP_ERR_INVALID_ARGUMENT || sp_pack_open(p, len, NULL) != SP_ERR_INVALID_ARGUMENT) return 41;
-    ri.offset += 1;
-    if (sp_record_window(p, len, &ri, &w, &wb) != SP_ERR_NOT_RECORD && sp_record_window(p, len, &ri, &w, &wb) != SP_ERR_INVALID_ARGUMENT) return 42;
+    sp_index_entry bad = idx[pos]; bad.preload += SP_PACK_PAGE;
+    if (sp_record_window(p, len, &bad, &w, &wb) != SP_ERR_MISMATCH || w || wb) return 42;
     p[4096 + 40] ^= 1;  /* inside the first record's sample id: its header checksum fails */
     if (sp_pack_record(p, len, &idx[0], &ri) != SP_ERR_BAD_CHECKSUM && sp_pack_record(p, len, &idx[1], &ri) != SP_ERR_BAD_CHECKSUM) return 43;
     free(p); free(pcm);
