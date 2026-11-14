@@ -1,0 +1,17 @@
+[package]
+name = "samplepack-cli"
+description = "Command-line tool for Oscairn Sample Packs (.osp): pack, list, verify, extract, copy, combine, compact, locality"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "samplepack"
+path = "src/main.rs"
+
+[dependencies]
+samplepack = { path = "../samplepack" }
+
+[lints]
+workspace = true

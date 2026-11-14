@@ -7,6 +7,7 @@ mod crc;
 mod subframe;
 
 use bits::BitReader;
+pub use crc::{crc16, crc8};
 
 /// Largest block size accepted, in samples per channel.
 pub const MAX_BLOCK: usize = 4096;

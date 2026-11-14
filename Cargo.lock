@@ -14,6 +14,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "samplepack-cli"
+version = "0.1.0"
+dependencies = [
+ "samplepack",
+]
+
+[[package]]
 name = "samplepack-tests"
 version = "0.1.0"
 dependencies = [
