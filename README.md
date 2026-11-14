@@ -30,6 +30,25 @@ cargo test --workspace
 sh tools/run-fuzz.sh 200000
 ```
 
+## Memory
+
+The library allocates nothing and keeps no state between calls. Everything it uses is either the
+caller's memory, sized as below, or stack; nothing grows with use or over time.
+
+| What | Caller provides |
+| --- | --- |
+| An open pack | the mapping of the file (read-only) and nothing else: no handle is kept; the C `sp_pack_info` is 32 bytes |
+| An index of N records | 56 bytes per entry (`sp_index_entry`). `sp_pack_index` needs N = live records; `sp_pack_rebuild_index` and `sp_pack_verify` need one entry per record and tombstone in the pack (a 1 GiB pack has at most 262,143 entries, 14 MiB) |
+| Decoding | 32,768 bytes of scratch (`sp_flac_scratch`), reusable, plus the output: 2 bytes per frame per channel (at most 8 KiB per channel for a 4,096-frame block) |
+| Verifying, computing a record's id | 65,536 bytes of scratch (`sp_verify_scratch`, which contains a decode scratch) |
+| A record description | 128 bytes (`sp_record_info`), optional |
+
+Stack: at most 2,576 bytes for any C function (the largest is `sp_record_sample_id`), plus the C
+library's `memcpy`, `memcmp` and `bzero`. Measured from the release static library's machine code on
+arm64 macOS with the pinned compiler, by adding frame sizes along the call graph; there is no
+recursion and no frame of variable size. Other targets and compilers give other numbers, and no check
+enforces this one.
+
 ## Licence
 
 MIT, see `LICENSE`. Source files start with an SPDX line. The repository contains no third-party
