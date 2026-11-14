@@ -349,6 +349,15 @@ page by page, finds it after at most the pages of the torn append. `recover` /
   ending in a well-formed footer is invalid in a way a torn write cannot cause (for example
   overlapping records): the pack is damaged, not torn, and must be re-verified or reinstalled.
 - Bytes after L, even well-formed records, are not part of the pack: an append is all or nothing.
+- Recovery is only for a pack this device itself was writing when it stopped. A pack from anywhere
+  else (an import, a copy, another device's media) must open as it is and pass full verification
+  (section 13); if it does not open it is refused, never recovered.
+- The search is bounded whatever the input, since a pack on removable or shared media can be
+  damaged by others: page ends without a footer magic cost no checksum, each other candidate is
+  charged what opening it may checksum (header prefix, footer, the trailer the footer names), and
+  once the total would exceed twice the searched length `recover` fails with `RECOVER_LIMIT`
+  without truncating. Torn appends recover within the bound (the test suite cuts one at every
+  byte).
 
 ## 12. Security rules for readers
 
@@ -529,6 +538,7 @@ decoder code is returned.
 | 55 | `ID_MISMATCH` | sample id of the decoded audio differs |
 | 56 | `TRAILER_MISMATCH` | the live set rebuilt from the entries differs from the trailer |
 | 57 | `NOT_RECORD` | the entry at that offset is not a record |
+| 58 | `RECOVER_LIMIT` | `recover` reached its bound on work (section 11): the tail is damaged, not torn |
 
 ## 20. Worked examples
 

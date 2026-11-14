@@ -126,6 +126,8 @@ pub enum Error {
     TrailerMismatch,
     /// The entry at that offset is not a record.
     NotRecord,
+    /// [`recover`] reached its bound on work: the tail is damaged, not torn.
+    RecoverLimit,
 }
 
 impl Error {
@@ -161,6 +163,7 @@ impl Error {
             Error::IdMismatch => 55,
             Error::TrailerMismatch => 56,
             Error::NotRecord => 57,
+            Error::RecoverLimit => 58,
         }
     }
 }

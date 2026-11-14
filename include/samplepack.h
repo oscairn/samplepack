@@ -69,7 +69,8 @@ typedef enum sp_status {
     SP_ERR_MD5_MISMATCH = 54,        /* MD5 of the decoded audio differs */
     SP_ERR_ID_MISMATCH = 55,         /* sample id of the decoded audio differs */
     SP_ERR_TRAILER_MISMATCH = 56,    /* live set rebuilt from the records differs from the trailer */
-    SP_ERR_NOT_RECORD = 57           /* the entry is not a record */
+    SP_ERR_NOT_RECORD = 57,          /* the entry is not a record */
+    SP_ERR_RECOVER_LIMIT = 58        /* sp_pack_recover reached its bound on work: damaged, not torn */
 } sp_status;
 
 /* Flag for sp_flac_decode_frame and sp_flac_scan: verify the header CRC-8 and the frame CRC-16. */
@@ -181,7 +182,10 @@ sp_status sp_pack_open(const uint8_t *data, size_t len, sp_pack_info *info);
 
 /* The committed length of a pack whose tail may be torn: the largest page-aligned prefix that
  * sp_pack_open accepts (SP_PACK_PAGE, an empty pack, if none). A writer truncates the file to it;
- * a reader uses data[0..committed). On an error nothing may be truncated. */
+ * a reader uses data[0..committed). On an error nothing may be truncated.
+ * Only for a pack this device itself was writing when it stopped: a pack from anywhere else must
+ * pass sp_pack_open and sp_pack_verify, and is refused, never recovered, if open fails. Whatever
+ * the input, at most 2 x len bytes are checksummed; past that SP_ERR_RECOVER_LIMIT is returned. */
 sp_status sp_pack_recover(const uint8_t *data, size_t len, uint64_t *committed);
 
 /* Fill table[0..capacity) with the trailer's entries sorted by id, for sp_index_find. *count is the

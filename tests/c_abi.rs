@@ -85,6 +85,7 @@ fn header_matches_library() {
         ("SP_ERR_ID_MISMATCH", P::IdMismatch),
         ("SP_ERR_TRAILER_MISMATCH", P::TrailerMismatch),
         ("SP_ERR_NOT_RECORD", P::NotRecord),
+        ("SP_ERR_RECOVER_LIMIT", P::RecoverLimit),
         ("SP_ERR_INVALID_ARGUMENT", P::InvalidArgument),
         ("SP_ERR_BUFFER_TOO_SMALL", P::BufferTooSmall),
     ];

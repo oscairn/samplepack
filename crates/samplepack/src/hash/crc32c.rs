@@ -20,6 +20,10 @@ const fn table() -> [u32; 256] {
 
 static TAB: [u32; 256] = table();
 
+/// Bytes checksummed so far, for tests that bound the work of a function.
+#[cfg(test)]
+pub(crate) static CHECKSUMMED: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+
 /// Streaming CRC-32C.
 #[derive(Clone, Copy, Debug)]
 pub struct Crc32c(u32);
@@ -31,6 +35,8 @@ impl Crc32c {
     }
     /// Feeds bytes.
     pub fn update(&mut self, data: &[u8]) {
+        #[cfg(test)]
+        CHECKSUMMED.fetch_add(data.len(), core::sync::atomic::Ordering::Relaxed);
         let mut c = self.0;
         for &b in data {
             c = (c >> 8) ^ TAB.get(usize::from(c as u8 ^ b)).copied().unwrap_or(0);

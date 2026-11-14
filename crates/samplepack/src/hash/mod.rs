@@ -7,6 +7,8 @@ mod crc32c;
 mod md5;
 mod sha256;
 
+#[cfg(test)]
+pub(crate) use crc32c::CHECKSUMMED;
 pub use crc32c::{crc32c, Crc32c};
 pub use md5::Md5;
 pub use sha256::Sha256;

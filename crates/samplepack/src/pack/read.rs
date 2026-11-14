@@ -290,14 +290,28 @@ impl<'a> Pack<'a> {
 ///
 /// Errors are returned, and nothing may be truncated, when the pack header is invalid or when a
 /// prefix ending in a well-formed footer is invalid for a reason a torn write cannot cause.
+///
+/// Only for a pack this device was writing when it stopped (section 11). The work is bounded
+/// whatever the input: at most twice the searched length is checksummed, and past that
+/// [`Error::RecoverLimit`] is returned.
 pub fn recover(data: &[u8]) -> Result<usize, Error> {
     check_header(data)?;
     let mut p = data.len().min(MAX_PACK) & !(PAGE - 1);
+    let mut budget = p.saturating_mul(2);
     while p > PAGE {
-        match Pack::open(data.get(..p).unwrap_or(&[])) {
-            Ok(_) => return Ok(p),
-            Err(Error::NoFooter | Error::BadFooter | Error::BadChecksum | Error::BadEntry) => {}
-            Err(e) => return Err(e),
+        let d = data.get(..p).unwrap_or(&[]);
+        let foot = d.get(p.wrapping_sub(FOOTER)..).unwrap_or(&[]);
+        // Without a footer magic open fails before any checksum but the header's, already checked.
+        if magic_of(foot) == MAGIC_FOOTER {
+            // open checksums the header prefix, the footer and at most the trailer the footer names
+            let tlen = usize::try_from(rd_u64(foot, 16)).map_or(p, |t| t.min(p));
+            let cost = tlen.wrapping_add(PREFIX).wrapping_add(FOOTER);
+            budget = budget.checked_sub(cost).ok_or(Error::RecoverLimit)?;
+            match Pack::open(d) {
+                Ok(_) => return Ok(p),
+                Err(Error::NoFooter | Error::BadFooter | Error::BadChecksum | Error::BadEntry) => {}
+                Err(e) => return Err(e),
+            }
         }
         p = p.wrapping_sub(PAGE);
     }
@@ -717,8 +731,42 @@ impl<'a> Record<'a> {
 }
 
 #[cfg(test)]
-#[allow(clippy::indexing_slicing)]
+#[allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
 mod tests {
+    extern crate std;
+    use crate::hash::{crc32c, CHECKSUMMED};
+    use crate::pack::{write_pack_header, Error, PAGE};
+    use core::sync::atomic::Ordering::Relaxed;
+
+    /// Every page ends in a valid footer naming a half-file trailer whose prefix is sane but whose
+    /// checksum is wrong: unbounded, recover would checksum 32 x 128 KiB, 16 times the file.
+    #[test]
+    fn recover_work_is_bounded() {
+        let (pages, half) = (64usize, 32 * PAGE);
+        let mut d = std::vec![0u8; pages * PAGE];
+        assert_eq!(write_pack_header(&mut d), Ok(()));
+        for k in 1..pages {
+            let (t, f) = (k * PAGE, (k + 1) * PAGE - 32);
+            d[t..t + 4].copy_from_slice(b"OSPI");
+            d[t + 4] = 1;
+            d[t + 8..t + 16].copy_from_slice(&(half as u64).to_le_bytes());
+            d[t + 16..t + 20].copy_from_slice(&(half as u32).to_le_bytes());
+            d[f..f + 4].copy_from_slice(b"OSPF");
+            d[f + 8..f + 16].copy_from_slice(&(((k + 1) * PAGE).wrapping_sub(half) as u64).to_le_bytes());
+            d[f + 16..f + 24].copy_from_slice(&(half as u64).to_le_bytes());
+            let c = crc32c(&d[f..f + 28]);
+            d[f + 28..f + 32].copy_from_slice(&c.to_le_bytes());
+        }
+        let before = CHECKSUMMED.load(Relaxed);
+        assert_eq!(super::recover(&d), Err(Error::RecoverLimit));
+        let spent = CHECKSUMMED.load(Relaxed) - before;
+        assert!(
+            spent <= 2 * d.len() + PAGE,
+            "{spent} bytes checksummed for {} bytes",
+            d.len()
+        );
+    }
+
     #[test]
     fn sort_orders_every_length() {
         let mut seed = 1u32;
