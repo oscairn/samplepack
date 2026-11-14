@@ -278,7 +278,9 @@ fn cmd_extract(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-fn copy_out(dst: &str, srcs: &[(&Loaded, Vec<IndexEntry>)]) -> Result<(), String> {
+/// Writes a new pack at `dst` (refusing an existing file unless `replace`) holding the listed
+/// records of each source, copied byte for byte; an id already copied is skipped.
+fn copy_out(dst: &str, srcs: &[(&Loaded, Vec<IndexEntry>)], replace: bool) -> Result<(), String> {
     let mut items = Vec::new();
     let mut seen: Vec<SampleId> = Vec::new();
     for (l, list) in srcs {
@@ -293,7 +295,7 @@ fn copy_out(dst: &str, srcs: &[(&Loaded, Vec<IndexEntry>)]) -> Result<(), String
         }
     }
     let path = Path::new(dst);
-    if path.exists() {
+    if !replace && path.exists() {
         return Err(format!("{dst} exists"));
     }
     let len = packio::create(path, &items)?;
@@ -313,7 +315,7 @@ fn cmd_copy(args: &[String]) -> Result<(), String> {
     let l = packio::load(Path::new(src))?;
     let idx = sorted_index(&l)?;
     let list = ids.iter().map(|a| resolve(&idx, a)).collect::<Result<Vec<_>, _>>()?;
-    copy_out(dst, &[(&l, list)])
+    copy_out(dst, &[(&l, list)], false)
 }
 
 fn cmd_combine(args: &[String]) -> Result<(), String> {
@@ -325,7 +327,7 @@ fn cmd_combine(args: &[String]) -> Result<(), String> {
         .map(|s| packio::load(Path::new(s)))
         .collect::<Result<Vec<_>, _>>()?;
     let parts: Vec<(&Loaded, Vec<IndexEntry>)> = loaded.iter().map(|l| (l, live(l))).collect();
-    copy_out(dst, &parts)
+    copy_out(dst, &parts, false)
 }
 
 fn cmd_compact(args: &[String]) -> Result<(), String> {
@@ -355,11 +357,8 @@ fn cmd_compact(args: &[String]) -> Result<(), String> {
             list.push(e);
         }
     }
-    let mut tmp = PathBuf::from(path);
-    tmp.as_mut_os_string().push(".compact");
-    let _ = std::fs::remove_file(&tmp);
-    copy_out(&tmp.to_string_lossy(), &[(&l, list)])?;
-    std::fs::rename(&tmp, path).map_err(|e| format!("{path}: {e}"))?;
+    // The pack is in memory; create replaces the file through a synced temporary and a rename.
+    copy_out(path, &[(&l, list)], true)?;
     println!("{path}: compacted from {} bytes", l.data.len() + l.dropped);
     Ok(())
 }
