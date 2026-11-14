@@ -700,12 +700,6 @@ impl<'a> Record<'a> {
         let b = self.table_at(i.checked_add(1)?)?;
         self.frames().get(a..b)
     }
-    /// Frames (samples per channel) in block `i`; 0 past the end.
-    pub fn block_frames(&self, i: u32) -> u32 {
-        let start = u64::from(i).wrapping_mul(u64::from(self.info.block_size));
-        let left = u64::from(self.info.frames).saturating_sub(start);
-        left.min(u64::from(self.info.block_size)) as u32
-    }
 
     /// Decodes blocks `[first, first + count)` into `out0` (channel 0) and `out1` (channel 1 of a
     /// stereo record), contiguously. Returns the frames written. `flags` are the decoder's
@@ -724,7 +718,7 @@ impl<'a> Record<'a> {
         if end > self.info.blocks {
             return Err(Error::InvalidArgument);
         }
-        let total = (first..end).fold(0u64, |a, b| a.wrapping_add(u64::from(self.block_frames(b))));
+        let total = (first..end).fold(0u64, |a, b| a.wrapping_add(u64::from(self.info.block_frames(b))));
         let total = usize::try_from(total).map_err(|_| Error::BufferTooSmall)?;
         let stereo = self.info.channels == 2;
         if out0.len() < total || (stereo && out1.len() < total) {
@@ -740,7 +734,7 @@ impl<'a> Record<'a> {
                 &mut []
             };
             let fi = flac::decode_frame(frame, flags, scratch, o0, o1)?;
-            let want = self.block_frames(b);
+            let want = self.info.block_frames(b);
             if fi.samples != want || fi.channels != self.info.channels {
                 return Err(Error::FrameMismatch);
             }

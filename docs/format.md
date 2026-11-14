@@ -312,9 +312,10 @@ implements it (Rust's standard library, no other dependency):
 
 The library does no I/O and no allocation: `write_pack_header`, `write_record`,
 `write_tombstone` and `write_trailer` serialise into caller buffers (`record_len` and
-`trailer_len` give the sizes). `write_record` decodes the given frames (CRCs checked) to fill the
-window and compute the MD5 and the sample id, then verifies the finished record in full. The
-caller writes the buffers at the offsets above and performs the syncs.
+`trailer_len` give the sizes). `write_record` checks the header it writes as a reader does and
+decodes the given frames, checking each as full verification does, to fill the window and compute
+the MD5 and the sample id. The caller writes the buffers at the offsets above and performs the
+syncs.
 
 ## 11. Opening and torn tails
 

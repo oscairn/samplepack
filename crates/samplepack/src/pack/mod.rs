@@ -233,6 +233,15 @@ pub struct RecordInfo {
     pub minor: u32,
 }
 
+impl RecordInfo {
+    /// Frames (samples per channel) in block `i`; 0 past the end.
+    pub fn block_frames(&self, i: u32) -> u32 {
+        let start = u64::from(i).wrapping_mul(u64::from(self.block_size));
+        let left = u64::from(self.frames).saturating_sub(start);
+        left.min(u64::from(self.block_size)) as u32
+    }
+}
+
 // --- little helpers shared by the reader and the writer ---
 
 pub(crate) fn rd_u16(d: &[u8], at: usize) -> u16 {

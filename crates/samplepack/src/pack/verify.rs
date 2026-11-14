@@ -2,7 +2,7 @@
 //! Full verification: zero padding, every frame decoded with its CRCs checked and its header
 //! compared with the record, the window, the MD5 and the recomputed sample id.
 
-use super::{find, rd_u32, Entry, Error, IndexEntry, Pack, Record, FOOTER, PAGE, PREFIX};
+use super::{find, rd_u32, Entry, Error, IndexEntry, Pack, Record, RecordInfo, FOOTER, PAGE, PREFIX};
 use crate::flac::{self, Scratch, FLAG_CHECK_CRC, MAX_BLOCK};
 use crate::hash::Md5;
 use crate::id::{IdHasher, SampleId};
@@ -104,47 +104,37 @@ fn zero(d: &[u8]) -> bool {
     d.iter().all(|&b| b == 0)
 }
 
-/// Decodes every frame of `rec`, checking each against the record, and returns the MD5 and the
-/// sample id of the decoded audio. The window is compared on the way.
-fn decode_pass(rec: &Record, vs: &mut VerifyScratch) -> Result<([u8; 16], SampleId), Error> {
-    let i = *rec.info();
-    let b = rec.bytes();
-    let checked = rd_u32(b, 16) as usize;
-    let h = i.head_len as usize;
-    let wend = h.wrapping_add(rec.window().len());
-    let fstart = h.wrapping_add(i.window_bytes as usize);
-    let fend = fstart.wrapping_add(i.frame_bytes as usize);
-    let credit_end = (i.credit_offset as usize).wrapping_add(i.credit_len as usize);
-    let pads = [
-        (credit_end, i.table_offset as usize),
-        (checked, h),
-        (wend, fstart),
-        (fend, b.len()),
-    ];
-    if pads.iter().any(|&(s, e)| !b.get(s..e).is_some_and(zero)) {
-        return Err(Error::Padding);
-    }
-    let ch = i.channels as usize;
+/// Decodes the `info.blocks` frames that `frames` yields, checking each as section 6.5 requires
+/// (CRCs, block size, channels, exact length, frame header), hands every block's audio to `sink`
+/// as interleaved 16-bit little-endian bytes, and returns the MD5 and the sample id of the audio.
+pub(crate) fn decode_audio<'f>(
+    info: &RecordInfo,
+    frames: impl Iterator<Item = Option<&'f [u8]>>,
+    vs: &mut VerifyScratch,
+    mut sink: impl FnMut(&[u8]) -> Result<(), Error>,
+) -> Result<([u8; 16], SampleId), Error> {
     let mut md5 = Md5::new();
-    let mut id = IdHasher::new(i.rate, i.channels as u8, 16);
-    let window = rec.window();
-    let mut wpos = 0usize;
+    let mut id = IdHasher::new(info.rate, info.channels as u8, 16);
     let VerifyScratch {
         flac: fs,
         ch: [l, r],
         bytes,
     } = vs;
-    for blk in 0..i.blocks {
-        let frame = rec.frame(blk).ok_or(Error::BadFrameTable)?;
+    for (blk, frame) in (0..info.blocks).zip(frames) {
+        let frame = frame.ok_or(Error::BadFrameTable)?;
         let fi = flac::decode_frame(frame, FLAG_CHECK_CRC, fs, l, r)?;
-        if fi.samples != rec.block_frames(blk) || fi.channels != i.channels || fi.consumed as usize != frame.len() {
+        if fi.samples != info.block_frames(blk) || fi.channels != info.channels || fi.consumed as usize != frame.len() {
             return Err(Error::FrameMismatch);
         }
-        check_frame_header(frame, blk, i.rate)?;
-        let n = fi.samples as usize;
-        let used = n.wrapping_mul(ch).wrapping_mul(2);
-        let out = bytes.get_mut(..used).unwrap_or(&mut []);
-        if ch == 1 {
+        check_frame_header(frame, blk, info.rate)?;
+        let out = bytes
+            .get_mut(
+                ..(fi.samples as usize)
+                    .wrapping_mul(info.channels as usize)
+                    .wrapping_mul(2),
+            )
+            .unwrap_or(&mut []);
+        if info.channels == 1 {
             for (o, s) in out.as_chunks_mut::<2>().0.iter_mut().zip(l.iter()) {
                 *o = s.to_le_bytes();
             }
@@ -157,18 +147,44 @@ fn decode_pass(rec: &Record, vs: &mut VerifyScratch) -> Result<([u8; 16], Sample
         }
         md5.update(out);
         id.update_bytes(out);
-        if wpos < window.len() {
-            let k = out.len().min(window.len().wrapping_sub(wpos));
-            if window.get(wpos..wpos.wrapping_add(k)) != out.get(..k) {
-                return Err(Error::WindowMismatch);
-            }
-            wpos = wpos.wrapping_add(k);
-        }
+        sink(out)?;
     }
+    Ok((md5.finish(), id.finish()))
+}
+
+/// Checks the padding, decodes every frame of `rec` comparing the window on the way, and returns
+/// the MD5 and the sample id of the decoded audio.
+fn decode_pass(rec: &Record, vs: &mut VerifyScratch) -> Result<([u8; 16], SampleId), Error> {
+    let i = rec.info();
+    let b = rec.bytes();
+    let checked = rd_u32(b, 16) as usize;
+    let h = i.head_len as usize;
+    let window = rec.window();
+    let fstart = h.wrapping_add(i.window_bytes as usize);
+    let fend = fstart.wrapping_add(i.frame_bytes as usize);
+    let credit_end = (i.credit_offset as usize).wrapping_add(i.credit_len as usize);
+    let pads = [
+        (credit_end, i.table_offset as usize),
+        (checked, h),
+        (h.wrapping_add(window.len()), fstart),
+        (fend, b.len()),
+    ];
+    if pads.iter().any(|&(s, e)| !b.get(s..e).is_some_and(zero)) {
+        return Err(Error::Padding);
+    }
+    let mut wpos = 0usize;
+    let sums = decode_audio(i, (0..i.blocks).map(|blk| rec.frame(blk)), vs, |out| {
+        let k = out.len().min(window.len().saturating_sub(wpos));
+        if window.get(wpos..wpos.wrapping_add(k)) != out.get(..k) {
+            return Err(Error::WindowMismatch);
+        }
+        wpos = wpos.wrapping_add(k);
+        Ok(())
+    })?;
     if wpos != window.len() {
         return Err(Error::WindowMismatch);
     }
-    Ok((md5.finish(), id.finish()))
+    Ok(sums)
 }
 
 /// Full verification of one record (section "Verification"): padding, frames, window, MD5 and

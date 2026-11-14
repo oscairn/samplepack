@@ -3,15 +3,15 @@
 //! the offsets the append protocol gives (section "Appending") and syncs in the stated order.
 
 use super::read::check_entry;
-use super::verify::check_frame_header;
+use super::verify::decode_audio;
 use super::{
-    entry_crc, page_up, verify_record, Error, IndexEntry, Record, RecordInfo, VerifyScratch, FOOTER, MAGIC_FOOTER,
-    MAGIC_HEADER, MAGIC_RECORD, MAGIC_TOMBSTONE, MAGIC_TRAILER, MAJOR, MAX_CREDIT, MAX_PACK, MAX_RECORDS, MAX_WINDOW,
-    MINOR, PAGE, PREFIX, RECORD_FIXED, TOMBSTONE_CHECKED, TRAILER_ENTRY, TRAILER_FIXED, WINDOW_STEP,
+    entry_crc, page_up, Error, IndexEntry, Record, RecordInfo, VerifyScratch, FOOTER, MAGIC_FOOTER, MAGIC_HEADER,
+    MAGIC_RECORD, MAGIC_TOMBSTONE, MAGIC_TRAILER, MAJOR, MAX_CREDIT, MAX_PACK, MAX_RECORDS, MAX_WINDOW, MINOR, PAGE,
+    PREFIX, RECORD_FIXED, TOMBSTONE_CHECKED, TRAILER_ENTRY, TRAILER_FIXED, WINDOW_STEP,
 };
-use crate::flac::{self, FLAG_CHECK_CRC};
-use crate::hash::{copy_into, crc32c, Md5};
-use crate::id::{IdHasher, SampleId};
+use crate::flac;
+use crate::hash::{copy_into, crc32c};
+use crate::id::SampleId;
 
 fn put(out: &mut [u8], at: usize, v: &[u8]) {
     copy_into(out.get_mut(at..).unwrap_or(&mut []), v);
@@ -194,9 +194,10 @@ pub fn record_len(p: &RecordParams) -> Result<usize, Error> {
 }
 
 /// Writes a complete record into `out[..record_len(p)]`: header, credit, frame table, preload
-/// window, frames and padding. The frames are decoded (CRCs checked) to fill the window and to
-/// compute the MD5 and the sample id, and the finished record is then verified in full. Returns
-/// the record's fields (its `offset` is 0: the record does not know where it will be placed).
+/// window, frames and padding. The header is checked as [`Record::parse`] does, and every frame is
+/// decoded and checked as full verification does (CRCs, block sizes, numbering, rate) to fill the
+/// window and to compute the MD5 and the sample id. Returns the record's fields (its `offset` is
+/// 0: the record does not know where it will be placed).
 pub fn write_record(p: &RecordParams, vs: &mut VerifyScratch, out: &mut [u8]) -> Result<RecordInfo, Error> {
     let l = layout(p)?;
     let r = region(out, l.total)?;
@@ -221,60 +222,26 @@ pub fn write_record(p: &RecordParams, vs: &mut VerifyScratch, out: &mut [u8]) ->
     for (i, v) in p.table.iter().enumerate() {
         put(r, l.table_off.wrapping_add(i.wrapping_mul(4)), &v.to_le_bytes());
     }
-    let fstart = l.head.wrapping_add(l.wbytes);
-    put(r, fstart, p.frame_data);
-
-    // Decode every frame: fill the window, hash the audio.
-    let ch = usize::from(p.channels);
-    let wlen = (l.window_frames as usize).wrapping_mul(ch).wrapping_mul(2);
-    let mut wpos = 0usize;
-    let mut md5 = Md5::new();
-    let mut id = IdHasher::new(p.rate, p.channels, 16);
-    let VerifyScratch {
-        flac: fs,
-        ch: [cl, cr],
-        bytes,
-    } = vs;
-    let mut done = 0u64;
-    for (i, w) in p.table.windows(2).enumerate() {
-        let (a, b) = match w {
-            [a, b] => (*a as usize, *b as usize),
-            _ => return Err(Error::InvalidArgument),
-        };
-        let frame = p.frame_data.get(a..b).ok_or(Error::InvalidArgument)?;
-        let fi = flac::decode_frame(frame, FLAG_CHECK_CRC, fs, cl, cr)?;
-        let want = u64::from(p.frames).wrapping_sub(done).min(u64::from(p.block_size));
-        if u64::from(fi.samples) != want || fi.channels != u32::from(p.channels) || fi.consumed as usize != frame.len()
-        {
-            return Err(Error::FrameMismatch);
-        }
-        check_frame_header(frame, i as u32, p.rate)?;
-        done = done.wrapping_add(want);
-        let n = (fi.samples as usize).wrapping_mul(ch).wrapping_mul(2);
-        let buf = bytes.get_mut(..n).unwrap_or(&mut []);
-        if ch == 1 {
-            for (o, s) in buf.as_chunks_mut::<2>().0.iter_mut().zip(cl.iter()) {
-                *o = s.to_le_bytes();
-            }
-        } else {
-            for (o, (x, y)) in buf.as_chunks_mut::<4>().0.iter_mut().zip(cl.iter().zip(cr.iter())) {
-                let [x0, x1] = x.to_le_bytes();
-                let [y0, y1] = y.to_le_bytes();
-                *o = [x0, x1, y0, y1];
-            }
-        }
-        md5.update(buf);
-        id.update_bytes(buf);
-        if wpos < wlen {
-            let k = buf.len().min(wlen.wrapping_sub(wpos));
-            put(r, l.head.wrapping_add(wpos), buf.get(..k).unwrap_or(&[]));
-            wpos = wpos.wrapping_add(k);
-        }
-    }
-    put(r, 32, &id.finish());
-    put(r, 64, &md5.finish());
+    put(r, l.head.wrapping_add(l.wbytes), p.frame_data);
     seal(r, l.checked);
-    let rec = Record::parse(r, 0)?;
-    verify_record(&rec, vs)?;
-    Ok(*rec.info())
+    // The header so far (id and MD5 still zero) must pass the reader's checks.
+    let info = *Record::parse(r, 0)?.info();
+    let wlen = (l.window_frames as usize)
+        .wrapping_mul(usize::from(p.channels))
+        .wrapping_mul(2);
+    let mut wpos = 0usize;
+    let frames = p.table.windows(2).map(|w| match w {
+        [a, b] => p.frame_data.get(*a as usize..*b as usize),
+        _ => None,
+    });
+    let (md5, id) = decode_audio(&info, frames, vs, |audio| {
+        let k = audio.len().min(wlen.saturating_sub(wpos));
+        put(r, l.head.wrapping_add(wpos), audio.get(..k).unwrap_or(&[]));
+        wpos = wpos.wrapping_add(k);
+        Ok(())
+    })?;
+    put(r, 32, &id);
+    put(r, 64, &md5);
+    seal(r, l.checked);
+    Ok(RecordInfo { id, md5, ..info })
 }
