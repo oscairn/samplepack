@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: MIT
-//! `samplepack`: make, inspect and rearrange Oscairn Sample Packs (.osp). See `usage()`.
+//! `samplepack`: make, inspect and rearrange Oscairn Sample Packs (.osp), and waveform files
+//! (.owf). See `usage()`.
 // A panic here ends the tool with a message; the pack parsing itself is the library's, which
 // cannot panic, and writes follow the append protocol, so a panic cannot leave a pack corrupt.
 #![allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
 
 mod audio;
 mod encode;
+mod owf;
 mod packio;
 
 use packio::{err, hex, Item};
@@ -30,6 +32,8 @@ fn usage() -> &'static str {
   samplepack compact PACK.osp [--order IDS.txt]
   samplepack remove PACK.osp ID...
   samplepack locality PACK.osp [ID...]
+  samplepack waveform show|check FILE.owf
+  samplepack waveform from-wav IN.wav --pack PACK.osp --out DIR
 IDs are 64 hex digits or a unique prefix of at least 8. New records are written in the order given,
 which keeps one sound's records adjacent; --order lists IDs (one per line) to put first."
 }
@@ -46,6 +50,7 @@ fn main() -> ExitCode {
         Some("compact") => cmd_compact(&args[1..]),
         Some("remove") => cmd_remove(&args[1..]),
         Some("locality") => cmd_locality(&args[1..]),
+        Some("waveform") => owf::cmd(&args[1..]),
         _ => Err(usage().to_string()),
     };
     match r {

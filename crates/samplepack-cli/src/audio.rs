@@ -17,7 +17,7 @@ pub struct Audio {
 fn u16le(d: &[u8], at: usize) -> Option<u16> {
     Some(u16::from_le_bytes(*d.get(at..)?.first_chunk::<2>()?))
 }
-fn u32le(d: &[u8], at: usize) -> Option<u32> {
+pub fn u32le(d: &[u8], at: usize) -> Option<u32> {
     Some(u32::from_le_bytes(*d.get(at..)?.first_chunk::<4>()?))
 }
 

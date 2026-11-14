@@ -452,3 +452,120 @@ fn short_samples_round_trip() {
         }
     }
 }
+
+/// A WAV file of `pcm` (mono, 44.1 kHz) with a `smpl` chunk after the data, when given.
+fn wav_smpl(path: &Path, pcm: &[u8], smpl: Option<Vec<u8>>) {
+    wav(path, 44100, 1, pcm);
+    let mut w = std::fs::read(path).unwrap();
+    if let Some(c) = smpl {
+        w.extend(b"smpl");
+        w.extend((c.len() as u32).to_le_bytes());
+        w.extend(c);
+        let riff = (w.len() - 8) as u32;
+        w[4..8].copy_from_slice(&riff.to_le_bytes());
+    }
+    std::fs::write(path, w).unwrap();
+}
+
+/// A `smpl` chunk body: unity note, pitch fraction, and loops of (type, start, end inclusive).
+fn smpl(note: u32, fraction: u32, loops: &[(u32, u32, u32)]) -> Vec<u8> {
+    let mut c: Vec<u8> = [0, 0, 22675, note, fraction, 0, 0, loops.len() as u32, 0]
+        .iter()
+        .flat_map(|v: &u32| v.to_le_bytes())
+        .collect();
+    for (i, (kind, start, end)) in loops.iter().enumerate() {
+        c.extend(
+            [i as u32, *kind, *start, *end, 0, 0]
+                .iter()
+                .flat_map(|v| v.to_le_bytes()),
+        );
+    }
+    c
+}
+
+/// `waveform from-wav` output: the waveform id and the sample id.
+fn from_wav(d: &Path, wav: &Path) -> (String, String) {
+    let out = run(bin()
+        .args(["waveform", "from-wav"])
+        .arg(wav)
+        .arg("--pack")
+        .arg(d.join("w.osp"))
+        .arg("--out")
+        .arg(d.join("owf")));
+    let field = |k: &str| out.lines().find_map(|l| l.strip_prefix(k)).unwrap().to_string();
+    (field("waveform "), field("sample "))
+}
+
+fn show(d: &Path, wid: &str) -> String {
+    let f = d.join("owf").join(format!("{wid}.owf"));
+    assert!(run(bin().args(["waveform", "check"]).arg(&f)).contains(wid));
+    run(bin().args(["waveform", "show"]).arg(&f))
+}
+
+#[test]
+fn waveform_from_wav() {
+    let d = work("from-wav");
+    let pcm = synth(1000, 1);
+    // smpl: unity note 69, a quarter of a semitone sharp, forward loop over frames 10 to 99
+    let (a, b) = (d.join("a.wav"), d.join("b.wav"));
+    wav_smpl(&a, &pcm, Some(smpl(69, 0x4000_0000, &[(0, 10, 99), (0, 0, 5)])));
+    let (wid, sid) = from_wav(&d, &a);
+    let s = show(&d, &wid);
+    assert!(
+        s.contains(&format!("id {wid}\nsamples 1\nbanks 1\nsample 0 {sid}\n")),
+        "{s}"
+    );
+    assert!(s.contains("\nbank 0 127 1 127 69 0 1 0 -2500 0 0 0 0 10 100\n"), "{s}");
+    // the sample is in the pack under the id the pack command gives the same audio
+    let id = ids_of(&run(bin().args(["pack", "-o"]).arg(d.join("p.osp")).arg(&a)))[0].clone();
+    assert_eq!(id, sid);
+    let (_, entries) = entries(&d.join("w.osp"));
+    assert_eq!(entries.iter().map(|e| hex(&e.id)).collect::<Vec<_>>(), [sid.as_str()]);
+    // the same audio again: the pack keeps one record; the waveform is the same file
+    let before = std::fs::read(d.join("w.osp")).unwrap();
+    assert_eq!(from_wav(&d, &a), (wid.clone(), sid.clone()));
+    assert_eq!(std::fs::read(d.join("w.osp")).unwrap(), before);
+
+    // no smpl chunk: root 60, no tune, no loop; a backward loop is not used either
+    wav_smpl(&b, &pcm, None);
+    let (plain, sid2) = from_wav(&d, &b);
+    assert_eq!(sid2, sid);
+    assert!(show(&d, &plain).contains("\nbank 0 127 1 127 60 0 0 0 0 0 0 0 0 0 0\n"));
+    wav_smpl(&b, &pcm, Some(smpl(60, 0, &[(2, 10, 99)])));
+    assert_eq!(from_wav(&d, &b).0, plain);
+    // the largest fraction rounds to a whole semitone down
+    wav_smpl(&b, &pcm, Some(smpl(60, u32::MAX, &[])));
+    let (sharp, _) = from_wav(&d, &b);
+    assert!(show(&d, &sharp).contains("\nbank 0 127 1 127 60 0 0 0 -10000 0 0 0 0 0 0\n"));
+
+    // malformed smpl chunks are refused, and nothing is added to the pack
+    let before = std::fs::read(d.join("w.osp")).unwrap();
+    let mut short = smpl(60, 0, &[(0, 10, 99)]);
+    short.truncate(50);
+    for (c, why) in [
+        (smpl(128, 0, &[]), "unity note"),
+        (smpl(60, 0, &[(0, 10, 1000)]), "not inside"),
+        (smpl(60, 0, &[(0, 99, 10)]), "not inside"),
+        (short, "too short"),
+        (smpl(60, 0, &[])[..30].to_vec(), "shorter than 36"),
+    ] {
+        wav_smpl(&b, &synth(999, 1), Some(c));
+        let e = fails(
+            bin()
+                .args(["waveform", "from-wav"])
+                .arg(&b)
+                .arg("--pack")
+                .arg(d.join("w.osp"))
+                .arg("--out")
+                .arg(d.join("owf")),
+        );
+        assert!(e.contains(why), "{why}: {e}");
+    }
+    assert_eq!(std::fs::read(d.join("w.osp")).unwrap(), before);
+    // a damaged waveform file is refused by check
+    let f = d.join("owf").join(format!("{wid}.owf"));
+    let mut w = std::fs::read(&f).unwrap();
+    w[30] ^= 1;
+    std::fs::write(&f, w).unwrap();
+    assert!(fails(bin().args(["waveform", "check"]).arg(&f)).contains("BadChecksum"));
+}
