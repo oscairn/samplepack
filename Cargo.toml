@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/samplepack", "tests"]
+members = ["crates/samplepack", "crates/samplepack-capi", "tests"]
 
 [workspace.package]
 version = "0.1.0"

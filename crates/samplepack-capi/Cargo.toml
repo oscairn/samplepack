@@ -1,0 +1,22 @@
+[package]
+name = "samplepack-capi"
+description = "C interface (static library) to the samplepack crate"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "samplepack_capi"
+crate-type = ["staticlib"]
+test = false
+doctest = false
+
+[features]
+link-fail-on-panic = []
+
+[dependencies]
+samplepack = { path = "../samplepack" }
+
+[lints]
+workspace = true

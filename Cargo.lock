@@ -7,6 +7,13 @@ name = "samplepack"
 version = "0.1.0"
 
 [[package]]
+name = "samplepack-capi"
+version = "0.1.0"
+dependencies = [
+ "samplepack",
+]
+
+[[package]]
 name = "samplepack-tests"
 version = "0.1.0"
 dependencies = [

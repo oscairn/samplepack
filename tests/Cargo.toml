@@ -13,6 +13,10 @@ samplepack = { path = "../crates/samplepack" }
 name = "conformance"
 path = "conformance.rs"
 
+[[test]]
+name = "c_abi"
+path = "c_abi.rs"
+
 [lib]
 path = "lib.rs"
 test = false
