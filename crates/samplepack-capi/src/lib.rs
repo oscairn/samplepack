@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 //! C interface to the `samplepack` crate (FLAC subset decoder and Oscairn Sample Pack reader). The matching header is `include/samplepack.h`; it is
-//! written by hand and checked against this file by `crates/samplepack-capi/tests`.
+//! written by hand and checked against this file by `tests/c_abi.rs`.
 //!
 //! This is the only place with `unsafe`: turning caller-supplied pointers and lengths into
 //! slices. Everything past that point is safe, checked code in the `samplepack` crate.

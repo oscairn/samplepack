@@ -45,9 +45,7 @@ static uint32_t rnd(void) { rng_s = rng_s * 6364136223846793005ull + 14426950408
 typedef struct { uint8_t *d; size_t len; } blob;
 static blob *frames; static size_t nframes, capframes;
 static long histo[16];
-static long diverge_pass, cases, ok_cases, fail_cases, scan_cases;
-static unsigned long long stat_unsup_only;
-static int verbose_diverge;
+static long cases, ok_cases, fail_cases, scan_cases;
 
 static const int16_t CANARY = 0x5A5A;
 
@@ -126,17 +124,6 @@ int main(int argc, char **argv) {
     guarded g1, g2, g3;
     scratch = (sp_flac_scratch *)guarded_alloc(&g1, sizeof *scratch); memset(scratch, 0, sizeof *scratch);
     rl = (int16_t *)guarded_alloc(&g2, FSD_MAXB * 2); rr = (int16_t *)guarded_alloc(&g3, FSD_MAXB * 2);
-    if (argc == 4 && !strcmp(argv[1], "dump")) {   // decode a whole file with the Rust library to interleaved s16le PCM
-        size_t n; uint8_t *d = slurp(argv[2], &n); uint64_t first; FILE *o = fopen(argv[3], "wb");
-        if (sp_flac_first_frame(d, n, &first) != SP_OK || !o) return 1;
-        for (size_t pos = (size_t)first; pos < n;) {
-            sp_flac_frame_info inf;
-            if (sp_flac_decode_frame(d + pos, n - pos, SP_FLAC_CHECK_CRC, scratch, rl, rr, FSD_MAXB, &inf) != SP_OK) { printf("decode failed at %zu of %zu\n", pos, n); return 1; }
-            for (uint32_t i = 0; i < inf.samples; i++) { fwrite(&rl[i], 2, 1, o); if (inf.channels == 2) fwrite(&rr[i], 2, 1, o); }
-            pos += inf.consumed;
-        }
-        fclose(o); return 0;
-    }
     if (argc >= 3 && !strcmp(argv[1], "files")) {
         long files = 0, fr = 0;
         for (int a = 2; a < argc; a++) {
@@ -158,7 +145,7 @@ int main(int argc, char **argv) {
         return 0;
     }
     if (argc >= 5 && !strcmp(argv[1], "fuzz")) {
-        long N = atol(argv[2]); rng_s = (uint64_t)atoll(argv[3]) * 2 + 1; (void)stat_unsup_only; (void)diverge_pass; (void)verbose_diverge;
+        long N = atol(argv[2]); rng_s = (uint64_t)atoll(argv[3]) * 2 + 1;
         for (int a = 4; a < argc; a++) split_into_frames(argv[a]);
         if (!nframes) { puts("no frames"); return 1; }
         uint8_t *buf = malloc(1 << 16); long div = 0;

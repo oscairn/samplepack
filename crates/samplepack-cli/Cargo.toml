@@ -1,6 +1,6 @@
 [package]
 name = "samplepack-cli"
-description = "Command-line tool for Oscairn Sample Packs (.osp): pack, list, verify, extract, copy, combine, compact, locality"
+description = "Command-line tool for Oscairn Sample Packs (.osp): pack, list, verify, extract, copy, combine, remove, compact, locality"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
