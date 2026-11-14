@@ -25,3 +25,7 @@ doctest = false
 [[test]]
 name = "hash"
 path = "hash.rs"
+
+[[test]]
+name = "pack"
+path = "pack.rs"
