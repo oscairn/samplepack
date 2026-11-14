@@ -372,18 +372,9 @@ pub enum Entry<'a> {
     Trailer {
         /// Offset in the pack.
         offset: usize,
-        /// Entry length.
-        length: usize,
-        /// Bytes covered by its checksum.
-        checked: usize,
     },
     /// An entry type this version does not know (skipped; see "Forward compatibility").
-    Unknown {
-        /// Offset in the pack.
-        offset: usize,
-        /// Entry length.
-        length: usize,
-    },
+    Unknown,
 }
 
 /// Iterator returned by [`Pack::scan`]. Yields `Err((offset, error))` once and then ends.
@@ -430,17 +421,10 @@ impl<'a> EntryIter<'a> {
                 if !self_ref {
                     return Err(Error::BadFooter);
                 }
-                Entry::Trailer {
-                    offset: pos,
-                    length: p.length,
-                    checked: p.checked,
-                }
+                Entry::Trailer { offset: pos }
             }
             MAGIC_HEADER => return Err(Error::BadEntry),
-            _ => Entry::Unknown {
-                offset: pos,
-                length: p.length,
-            },
+            _ => Entry::Unknown,
         })
     }
 }

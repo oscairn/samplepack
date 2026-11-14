@@ -2,7 +2,7 @@
 //! Full verification: zero padding, every frame decoded with its CRCs checked and its header
 //! compared with the record, the window, the MD5 and the recomputed sample id.
 
-use super::{find, rd_u32, Entry, Error, IndexEntry, Pack, Record, RecordInfo, FOOTER, PAGE, PREFIX};
+use super::{find, rd_u32, rd_u64, Entry, Error, IndexEntry, Pack, Record, RecordInfo, FOOTER, PAGE, PREFIX};
 use crate::flac::{self, Scratch, FLAG_CHECK_CRC, MAX_BLOCK};
 use crate::hash::Md5;
 use crate::id::{IdHasher, SampleId};
@@ -187,19 +187,20 @@ pub fn verify_pack(pack: &Pack, vs: &mut VerifyScratch, index: &mut [IndexEntry]
         return Err(Error::Padding);
     }
     for e in pack.scan() {
-        let pad = match e.map_err(|(_, err)| err)? {
-            Entry::Tombstone { offset, .. } => {
-                let checked = rd_u32(data, offset.wrapping_add(16)) as usize;
-                data.get(offset.wrapping_add(checked)..offset.wrapping_add(PAGE))
-            }
-            Entry::Trailer {
+        // The bytes after the checked ones, to the end of a tombstone's page or to a trailer's footer.
+        let (at, end) = match e.map_err(|(_, err)| err)? {
+            Entry::Tombstone { offset, .. } => (offset, PAGE),
+            Entry::Trailer { offset } => (
                 offset,
-                length,
-                checked,
-            } => data.get(offset.wrapping_add(checked)..offset.wrapping_add(length).wrapping_sub(FOOTER)),
-            _ => Some(&[][..]),
+                (rd_u64(data, offset.wrapping_add(8)) as usize).wrapping_sub(FOOTER),
+            ),
+            _ => continue,
         };
-        if !pad.is_some_and(zero) {
+        let checked = rd_u32(data, at.wrapping_add(16)) as usize;
+        if !data
+            .get(at.wrapping_add(checked)..at.wrapping_add(end))
+            .is_some_and(zero)
+        {
             return Err(Error::Padding);
         }
     }

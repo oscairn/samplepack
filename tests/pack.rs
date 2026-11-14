@@ -184,7 +184,7 @@ fn tombstones_and_rebuild() {
             Entry::Record(_) => 'R',
             Entry::Tombstone { .. } => 'T',
             Entry::Trailer { .. } => 'I',
-            Entry::Unknown { .. } => '?',
+            Entry::Unknown => '?',
         })
         .collect();
     assert_eq!(kinds.iter().collect::<String>(), "RRITIRI");
@@ -212,7 +212,7 @@ fn unknown_entries_and_newer_minor_are_skipped() {
     pack::write_trailer(&entries, q.len() as u64, &mut tr).unwrap();
     q.extend(tr);
     let p = Pack::open(&q).unwrap();
-    assert!(p.scan().any(|e| matches!(e, Ok(Entry::Unknown { .. }))));
+    assert!(p.scan().any(|e| matches!(e, Ok(Entry::Unknown))));
     assert_eq!(verify_pack(&p, &mut vs(), &mut [IndexEntry::default(); 2]), Ok(1));
     // a record of a newer minor version may use its reserved fields
     let r0 = 4096;
@@ -403,8 +403,17 @@ fn every_rejection_reason() {
         pn.rebuild_index(&mut [IndexEntry::default(); 2]),
         Err((Error::NotLive, 2))
     );
-    // malformed tombstone
+    // padding after the checked bytes of a tombstone and of a trailer
     let ts = nl.len() - 2 * PAGE;
+    for at in [ts + 100, nl.len() - 100] {
+        let mut d = nl.clone();
+        d[at] = 1;
+        assert_eq!(
+            verify_pack(&Pack::open(&d).unwrap(), &mut vs(), &mut [IndexEntry::default(); 2]),
+            Err(Error::Padding)
+        );
+    }
+    // malformed tombstone
     let mut bt = nl.clone();
     wr32(&mut bt, ts + 16, 60);
     reseal(&mut bt, ts);
