@@ -428,6 +428,18 @@ both:
    The trailer carries each record's preload span, so all hints can be issued from the index alone,
    without reading any record header first.
 
+Measured on the device (non-normative; uncached files, 200 reads of 16 KiB spaced 300 KB apart):
+
+| Access pattern | Total |
+| --- | --- |
+| one `WILLNEED` batch for all 200 spans, then reads in ascending order | 41.8 ms |
+| ascending order, no hints | 99.5 ms |
+| random order, no hints | 114.2 ms |
+
+Sequential reads run at about 167 MB/s. Scaled to an 854-sample sound whose records are adjacent
+(ordered by sound), the batched, ascending pattern gives about 0.18 s cold, against about 0.5 s
+for the windows read one by one in no particular order.
+
 `samplepack locality PACK [ID...]` reports, for a set of records, the preload bytes, the file span,
 the gaps between preload spans, and the cold-read cost under this device model (one read per
 record; reads merged as above; one sequential read of the span). It is a model, not a measurement.
