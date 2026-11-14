@@ -20,9 +20,9 @@ pub struct Loaded {
 }
 
 impl Loaded {
-    pub fn pack(&self) -> Pack<'_> {
-        // open() succeeded on these bytes in load(); a failure here cannot happen.
-        Pack::open(&self.data).unwrap_or_else(|_| std::process::exit(70))
+    /// The pack (open succeeded on these bytes in `load`).
+    pub fn pack(&self) -> Result<Pack<'_>, String> {
+        Pack::open(&self.data).map_err(err)
     }
 }
 
@@ -147,7 +147,7 @@ pub fn append(path: &Path, items: &[Item]) -> Result<u64, String> {
         f.sync_data().map_err(|e| format!("{what}: {e}"))?;
         eprintln!("{what}: cut back to the last commit ({} bytes)", l.data.len());
     }
-    let live: Vec<IndexEntry> = l.pack().entries().collect();
+    let live: Vec<IndexEntry> = l.pack()?.entries().collect();
     write_items(&mut f, l.data.len() as u64, live, items).map_err(|e| format!("{what}: {e}"))
 }
 

@@ -8,9 +8,9 @@ mod audio;
 mod encode;
 mod packio;
 
-use packio::{err, hex, Item, Loaded};
+use packio::{err, hex, Item};
 use samplepack::id::{sample_id, SampleId};
-use samplepack::pack::{self, find, IndexEntry, RecordParams, VerifyScratch, DEFAULT_WINDOW};
+use samplepack::pack::{self, find, IndexEntry, Pack, RecordParams, VerifyScratch, DEFAULT_WINDOW};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -103,12 +103,7 @@ fn resolve(index: &[IndexEntry], arg: &str) -> Result<IndexEntry, String> {
     }
 }
 
-fn live(l: &Loaded) -> Vec<IndexEntry> {
-    l.pack().entries().collect()
-}
-
-fn sorted_index(l: &Loaded) -> Result<Vec<IndexEntry>, String> {
-    let p = l.pack();
+fn sorted_index(p: &Pack) -> Result<Vec<IndexEntry>, String> {
     let mut v = vec![IndexEntry::default(); p.records()];
     p.index(&mut v).map_err(err)?;
     Ok(v)
@@ -208,7 +203,7 @@ fn cmd_list(args: &[String]) -> Result<(), String> {
         return Err(usage().into());
     };
     let l = packio::load(Path::new(path))?;
-    let p = l.pack();
+    let p = l.pack()?;
     println!("# id offset length preload rate channels frames window_frames credit");
     for e in p.entries() {
         let r = p.record(&e).map_err(err)?;
@@ -237,7 +232,7 @@ fn cmd_verify(args: &[String]) -> Result<(), String> {
         return Err(usage().into());
     };
     let l = packio::load(Path::new(path))?;
-    let p = l.pack();
+    let p = l.pack()?;
     let entries = p.scan().count();
     let mut idx = vec![IndexEntry::default(); entries.max(1)];
     if opt(&opts, "--full").is_some() {
@@ -265,8 +260,8 @@ fn cmd_extract(args: &[String]) -> Result<(), String> {
         return Err(usage().into());
     };
     let l = packio::load(Path::new(path))?;
-    let e = resolve(&sorted_index(&l)?, id)?;
-    let p = l.pack();
+    let p = l.pack()?;
+    let e = resolve(&sorted_index(&p)?, id)?;
     let r = p.record(&e).map_err(err)?;
     let mut vs = Box::new(VerifyScratch::new());
     pack::verify_record(&r, &mut vs).map_err(err)?;
@@ -280,11 +275,10 @@ fn cmd_extract(args: &[String]) -> Result<(), String> {
 
 /// Writes a new pack at `dst` (refusing an existing file unless `replace`) holding the listed
 /// records of each source, copied byte for byte; an id already copied is skipped.
-fn copy_out(dst: &str, srcs: &[(&Loaded, Vec<IndexEntry>)], replace: bool) -> Result<(), String> {
+fn copy_out(dst: &str, srcs: &[(Pack, Vec<IndexEntry>)], replace: bool) -> Result<(), String> {
     let mut items = Vec::new();
     let mut seen: Vec<SampleId> = Vec::new();
-    for (l, list) in srcs {
-        let p = l.pack();
+    for (p, list) in srcs {
         for e in list {
             if seen.contains(&e.id) {
                 eprintln!("{} is already included, skipped", hex(&e.id));
@@ -313,9 +307,10 @@ fn cmd_copy(args: &[String]) -> Result<(), String> {
         return Err("copy needs at least one ID".into());
     }
     let l = packio::load(Path::new(src))?;
-    let idx = sorted_index(&l)?;
+    let p = l.pack()?;
+    let idx = sorted_index(&p)?;
     let list = ids.iter().map(|a| resolve(&idx, a)).collect::<Result<Vec<_>, _>>()?;
-    copy_out(dst, &[(&l, list)], false)
+    copy_out(dst, &[(p, list)], false)
 }
 
 fn cmd_combine(args: &[String]) -> Result<(), String> {
@@ -326,7 +321,10 @@ fn cmd_combine(args: &[String]) -> Result<(), String> {
         .iter()
         .map(|s| packio::load(Path::new(s)))
         .collect::<Result<Vec<_>, _>>()?;
-    let parts: Vec<(&Loaded, Vec<IndexEntry>)> = loaded.iter().map(|l| (l, live(l))).collect();
+    let parts = loaded
+        .iter()
+        .map(|l| l.pack().map(|p| (p, p.entries().collect())))
+        .collect::<Result<Vec<_>, _>>()?;
     copy_out(dst, &parts, false)
 }
 
@@ -337,7 +335,8 @@ fn cmd_compact(args: &[String]) -> Result<(), String> {
         return Err(usage().into());
     };
     let l = packio::load(Path::new(path))?;
-    let idx = sorted_index(&l)?;
+    let p = l.pack()?;
+    let idx = sorted_index(&p)?;
     let mut list: Vec<IndexEntry> = Vec::new();
     if let Some(f) = opt(&opts, "--order") {
         let text = std::fs::read_to_string(f).map_err(|e| format!("{f}: {e}"))?;
@@ -352,13 +351,13 @@ fn cmd_compact(args: &[String]) -> Result<(), String> {
             }
         }
     }
-    for e in live(&l) {
+    for e in p.entries() {
         if !list.contains(&e) {
             list.push(e);
         }
     }
     // The pack is in memory; create replaces the file through a synced temporary and a rename.
-    copy_out(path, &[(&l, list)], true)?;
+    copy_out(path, &[(p, list)], true)?;
     println!("{path}: compacted from {} bytes", l.data.len() + l.dropped);
     Ok(())
 }
@@ -370,7 +369,7 @@ fn cmd_remove(args: &[String]) -> Result<(), String> {
         return Err(usage().into());
     };
     let l = packio::load(Path::new(path))?;
-    let idx = sorted_index(&l)?;
+    let idx = sorted_index(&l.pack()?)?;
     let items = ids
         .iter()
         .map(|a| resolve(&idx, a).map(|e| Item::Tombstone(e.id)))
@@ -396,10 +395,11 @@ fn cmd_locality(args: &[String]) -> Result<(), String> {
         return Err(usage().into());
     };
     let l = packio::load(Path::new(path))?;
-    let mut set = if ids.is_empty() {
-        live(&l)
+    let p = l.pack()?;
+    let mut set: Vec<IndexEntry> = if ids.is_empty() {
+        p.entries().collect()
     } else {
-        let idx = sorted_index(&l)?;
+        let idx = sorted_index(&p)?;
         ids.iter().map(|a| resolve(&idx, a)).collect::<Result<Vec<_>, _>>()?
     };
     set.sort_by_key(|e| e.offset);
