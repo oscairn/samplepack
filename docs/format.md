@@ -180,9 +180,12 @@ verbatim, fixed (order 0 to 4) or LPC (order 1 to 8) subframes, Rice or Rice2 re
 addition:
 
 - fixed blocking strategy (frame header bit 0 of byte 1 clear);
-- frame i holds exactly B frames, except the last, which holds frames - (N - 1) x B;
+- frame i holds exactly B frames, except the last, which holds frames - (N - 1) x B (a sample
+  shorter than B is one FLAC frame of `frames` samples, its block size coded explicitly);
 - the coded frame number of frame i is i, in its shortest form;
-- the frame header's sample-rate code is 0 ("from STREAMINFO") or codes the record's rate;
+- the frame header's sample-rate code is 0 ("from STREAMINFO") or codes the record's rate exactly;
+  a writer uses 0 when no code gives the rate exactly (for example 70,958 Hz), since the record
+  header and the extracted STREAMINFO carry the rate;
 - each frame exactly fills its table slot [table[i], table[i+1]);
 - frame CRC-8 and CRC-16 are correct.
 

@@ -333,3 +333,122 @@ fn torn_append_is_cut_back() {
     assert_eq!(std::fs::read(&p).unwrap(), full);
     run(bin().args(["verify", "--full"]).arg(&p));
 }
+
+/// Synthetic interleaved 16-bit PCM, `frames` x `channels`, as little-endian bytes.
+fn synth(frames: usize, channels: usize) -> Vec<u8> {
+    (0..frames * channels)
+        .flat_map(|i| {
+            let (t, c) = ((i / channels) as i32, (i % channels) as i32);
+            ((t * 37 + c * 11) % 2000 - 1000 + (t * t) % 97).to_le_bytes()[..2].to_vec()
+        })
+        .collect()
+}
+
+/// Packs one WAV, verifies the pack, extracts the record and packs the extract again; returns the
+/// sample id (equal both times), the pack bytes and the extracted file.
+fn round_trip(d: &Path, name: &str, rate: u32, channels: u16, pcm: &[u8], window: &str) -> (String, Vec<u8>, Vec<u8>) {
+    let (w, p, f) = (
+        d.join(format!("{name}.wav")),
+        d.join(format!("{name}.osp")),
+        d.join(format!("{name}.flac")),
+    );
+    wav(&w, rate, channels, pcm);
+    let id = ids_of(&run(bin().args(["pack", "--window", window, "-o"]).arg(&p).arg(&w)))[0].clone();
+    run(bin().args(["verify", "--full"]).arg(&p));
+    run(bin().arg("extract").arg(&p).arg(&id).arg("-o").arg(&f));
+    let again = ids_of(&run(bin()
+        .args(["pack", "-o"])
+        .arg(d.join(format!("{name}.2.osp")))
+        .arg(&f)));
+    assert_eq!(again[0], id, "{name}: extract packs to the same id");
+    if have_flac() {
+        run(Command::new("flac").args(["-t", "-s"]).arg(&f));
+    }
+    (id, std::fs::read(&p).unwrap(), std::fs::read(&f).unwrap())
+}
+
+/// Rates inside and outside FLAC's header codes, up to the record maximum: the frame header uses a
+/// code that gives the rate exactly, or 0 ("from STREAMINFO") when none does, and the extracted
+/// STREAMINFO carries the rate.
+#[test]
+fn any_rate_round_trips() {
+    use samplepack::flac::{self, FrameEntry, Scratch, SAMPLE_RATES};
+    let d = work("rates");
+    let pcm = synth(3000, 2);
+    let mut ids = Vec::new();
+    for rate in [
+        1143, 8000, 27471, 44100, 70958, 96000, 139636, 192000, 384000, 1_048_575,
+    ] {
+        let (id, _, file) = round_trip(&d, &format!("r{rate}"), rate, 2, &pcm, "4096");
+        let si = &file[8..42];
+        assert_eq!(
+            (u32::from(si[10]) << 12) | (u32::from(si[11]) << 4) | (u32::from(si[12]) >> 4),
+            rate
+        );
+        let exact = |code: u8, x: &[u8]| match code {
+            1..=11 => SAMPLE_RATES[usize::from(code)] == rate,
+            12 => u32::from(x[0]) * 1000 == rate,
+            13 => u32::from(u16::from_be_bytes([x[0], x[1]])) == rate,
+            14 => u32::from(u16::from_be_bytes([x[0], x[1]])) * 10 == rate,
+            _ => false,
+        };
+        let any_exact = SAMPLE_RATES.contains(&rate)
+            || (rate % 1000 == 0 && rate / 1000 <= 255)
+            || rate <= 65535
+            || (rate % 10 == 0 && rate / 10 <= 65535);
+        let frames = &file[flac::first_frame(&file).unwrap()..];
+        let mut t = vec![FrameEntry::default(); 8];
+        let r = flac::scan(frames, flac::FLAG_CHECK_CRC, &mut Box::new(Scratch::new()), &mut t);
+        assert_eq!(r.status, Ok(()));
+        for e in &t[..r.frames] {
+            let h = &frames[e.offset as usize..];
+            let code = h[2] & 15;
+            // after sync, codes and the 1- or 2-byte frame number (frames 0 to 2) and an explicit block size
+            let extra = &h[5 + if h[2] >> 4 == 7 { 2 } else { 0 }..];
+            assert!(
+                if code == 0 { !any_exact } else { exact(code, extra) },
+                "rate {rate}: code {code}"
+            );
+        }
+        ids.push(id);
+    }
+    let n = ids.len();
+    ids.sort();
+    ids.dedup();
+    assert_eq!(ids.len(), n, "the same PCM at another rate is another sample");
+}
+
+/// Samples shorter than one block, shorter than the smallest block size and one over a block:
+/// pack, verify, extract, and decode block by block; windows larger than the sample hold it whole.
+#[test]
+fn short_samples_round_trip() {
+    use samplepack::flac::Scratch;
+    let d = work("short");
+    for frames in [1usize, 15, 16, 255, 256, 257, 1025] {
+        let pcm = synth(frames, 1);
+        let want: Vec<i16> = pcm.chunks(2).map(|b| i16::from_le_bytes([b[0], b[1]])).collect();
+        for window in ["4096", "1024"] {
+            let (_, pack, _) = round_trip(&d, &format!("n{frames}w{window}"), 44100, 1, &pcm, window);
+            let p = Pack::open(&pack).unwrap();
+            let r = p.record(&p.entries().next().unwrap()).unwrap();
+            let i = r.info();
+            let expect_window = if frames <= 1024 || window == "4096" {
+                frames
+            } else {
+                1024
+            };
+            assert_eq!((i.frames as usize, i.window_frames as usize), (frames, expect_window));
+            assert_eq!(r.window(), &pcm[..expect_window * 2]);
+            let mut s = Box::new(Scratch::new());
+            let mut out = vec![0i16; 2048];
+            let mut got = Vec::new();
+            for b in 0..i.blocks {
+                let n = r.decode(b, 1, 0, &mut s, &mut out, &mut []).unwrap();
+                got.extend_from_slice(&out[..n]);
+            }
+            assert_eq!(got, want, "{frames} frames block by block");
+            assert_eq!(r.decode(0, i.blocks, 0, &mut s, &mut out, &mut []), Ok(frames));
+            assert_eq!(&out[..frames], &want[..]);
+        }
+    }
+}
