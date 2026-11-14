@@ -7,6 +7,7 @@
 //! * `pack` (planned): the container (index, records, trailers). It will call [`flac`] and
 //!   nothing else in this crate.
 //! * `id` (planned): sample-id hashing. Independent of the decoder.
+//! * [`hash`]: CRC-32C, SHA-256 and MD5.
 //!
 //! The crate is `no_std`, allocates nothing and has no dependencies. No value taken from the
 //! input can cause a panic: all access is checked, all arithmetic is explicit.
@@ -14,3 +15,4 @@
 #![deny(unsafe_code)]
 
 pub mod flac;
+pub mod hash;

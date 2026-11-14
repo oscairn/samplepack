@@ -21,3 +21,7 @@ path = "c_abi.rs"
 path = "lib.rs"
 test = false
 doctest = false
+
+[[test]]
+name = "hash"
+path = "hash.rs"
