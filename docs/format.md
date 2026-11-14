@@ -291,7 +291,24 @@ trailer) is refused. A library therefore occupies one or more packs. Splitting a
 records into another; combining is copying records into one pack; an export of a subset is a pack
 holding the subset. All use the same format.
 
-### 10.5 Library writer interface
+### 10.5 Windows
+
+The protocol is the same; what the platform guarantees differs in one place, as the reference tool
+implements it (Rust's standard library, no other dependency):
+
+- Syncing file data uses `FlushFileBuffers`. Appends write in place, so they have the same
+  guarantee as on POSIX systems: after a crash the pack is the last committed state.
+- Creating a pack and compaction write a complete, flushed temporary file and rename it over the
+  destination (the rename replaces an existing file). Windows offers no directory sync through
+  the standard library, so the durability of the rename itself is not forced: after a power
+  failure shortly after a compaction the old pack, which is a valid committed pack holding the
+  same live records, may be found instead of the new one. NTFS journals the rename, so a partly
+  renamed or partly written pack is not expected; this has not been tested by cutting power.
+- Renaming over a pack that another process has open fails on Windows (unless it was opened to
+  allow deletion); the tool then reports the error and leaves the old pack in place. A host
+  replaces a compacted pack only when no engine maps it (Appendix A).
+
+### 10.6 Library writer interface
 
 The library does no I/O and no allocation: `write_pack_header`, `write_record`,
 `write_tombstone` and `write_trailer` serialise into caller buffers (`record_len` and

@@ -164,6 +164,12 @@ fn round_trip_extract_and_flac_test() {
     for (id, name) in ids.iter().zip(names) {
         let f = d.join(format!("{name}.flac"));
         run(bin().arg("extract").arg(&pk).arg(&id[..12]).arg("-o").arg(&f));
+        // Without the flac tool too: the extracted file packs again to the same sample id.
+        let again = ids_of(&run(bin()
+            .args(["pack", "-o"])
+            .arg(d.join(format!("{name}.osp")))
+            .arg(&f)));
+        assert_eq!(&again[0], id, "{name}: extract is bit-exact");
         if flac {
             run(Command::new("flac").args(["-t", "-s"]).arg(&f));
             let raw = d.join(format!("{name}.raw"));
