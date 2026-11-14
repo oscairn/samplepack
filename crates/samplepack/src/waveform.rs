@@ -66,6 +66,8 @@ pub enum Error {
     UnusedSample,
     /// One sample id listed twice.
     DuplicateSample,
+    /// An end that is neither 0 nor greater than the start.
+    BadEnd,
 }
 
 impl Error {
@@ -200,6 +202,9 @@ impl KeyBank {
         }
         if usize::from(self.sample) >= samples {
             return Err(Error::BadSampleIndex);
+        }
+        if self.end != 0 && self.end <= self.start {
+            return Err(Error::BadEnd);
         }
         let loop_ok = if self.loop_mode == 0 {
             self.loop_start == 0 && self.loop_end == 0

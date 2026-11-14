@@ -119,6 +119,7 @@ fn header_matches_library() {
         ("SP_ERR_WF_SAMPLE_ORDER", W::SampleOrder),
         ("SP_ERR_WF_UNUSED_SAMPLE", W::UnusedSample),
         ("SP_ERR_WF_DUPLICATE_SAMPLE", W::DuplicateSample),
+        ("SP_ERR_WF_END", W::BadEnd),
     ];
     codes.extend(waveform_errors.iter().map(|(_, v)| v.code()));
     codes.sort();

@@ -67,7 +67,7 @@ Frames count from 0 in the sample as its pack record stores it. With no loop, lo
 inside the sample can only be checked when the sample is at hand; a reader that has the sample
 refuses a key bank that points outside it.
 
-Start and end let a sample be trimmed without re-encoding it.
+End is 0 or greater than start. Start and end let a sample be trimmed without re-encoding it.
 
 ## 2. Canonical form and the waveform id
 
@@ -94,8 +94,9 @@ they use, and nothing else. The header's first 16 bytes are not hashed (they are
 that is given a waveform under an id recomputes the id and refuses a mismatch.
 
 A reader refuses: a wrong magic, version, flags, size or CRC; S or K outside its limits; a field
-outside its range; lowest above highest; a sample index of S or more; loop points without a loop, or
-a loop with start not below end; any breach of the canonical form.
+outside its range; lowest above highest; a sample index of S or more; an end that is neither 0 nor
+greater than the start; loop points without a loop, or a loop that breaks start <= loop start < loop
+end <= end (when end is not 0); any breach of the canonical form.
 
 **Overlap is allowed.** Two key banks of one waveform may cover the same key and velocity, and a
 note then starts each of them. Existing multisamples need this: they store left and right as two
@@ -123,6 +124,7 @@ the first refusal that applies.
 | 73 | `WF_RANGE` | a key, velocity, root, transpose, loop, tune, level or pan outside its range |
 | 74 | `WF_LOW_ABOVE_HIGH` | a lowest key or velocity above the highest |
 | 75 | `WF_SAMPLE_INDEX` | a sample index of S or more |
+| 82 | `WF_END` | end not 0 and not greater than start |
 | 76 | `WF_LOOP` | loop start or end not 0 without a loop; with a loop, not start <= loop start < loop end <= end (end not 0) |
 | 81 | `WF_DUPLICATE_SAMPLE` | one sample id listed twice |
 | 77 | `WF_NOT_SORTED` | key banks not in canonical order |
@@ -150,6 +152,9 @@ holding one key bank:
 - **loop**: when the chunk lists at least one loop (count at offset 28; loops of 24 bytes from
   offset 36) and the first has type 0 (forward), loop forward from its start to its end plus one
   (a WAV loop end is inclusive), which must lie inside the sample; otherwise no loop.
+
+Tools differ in how reliably they fill the pitch fraction; a wrong tune is corrected by editing the
+waveform.
 
 A `smpl` chunk shorter than 36 bytes, or than 36 + 24 x its loop count, or running past the end
 of the file, is refused, as is a forward loop whose start is after its end or whose end is not

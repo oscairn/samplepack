@@ -90,7 +90,8 @@ typedef enum sp_status {
     SP_ERR_WF_DUPLICATE_BANK = 78,    /* two equal key banks */
     SP_ERR_WF_SAMPLE_ORDER = 79,      /* sample ids not in order of first use */
     SP_ERR_WF_UNUSED_SAMPLE = 80,     /* a sample id no key bank uses */
-    SP_ERR_WF_DUPLICATE_SAMPLE = 81   /* one sample id listed twice */
+    SP_ERR_WF_DUPLICATE_SAMPLE = 81,  /* one sample id listed twice */
+    SP_ERR_WF_END = 82                /* end neither 0 nor greater than start */
 } sp_status;
 
 /* Flag for sp_flac_decode_frame and sp_flac_scan: verify the header CRC-8 and the frame CRC-16. */
@@ -292,7 +293,7 @@ typedef struct sp_key_bank {
     int32_t tune;                    /* 1/100 cent, within +-1,200,000 */
     int32_t level;                   /* 1/100 dB, -14,400..4,800 */
     int16_t pan;                     /* 1/100 of -100..100, within +-10,000 */
-    uint32_t start, end;             /* frames; end exclusive, 0 for the end of the sample */
+    uint32_t start, end;             /* frames; end exclusive and greater than start, or 0 for the end of the sample */
     uint32_t loop_start, loop_end;   /* frames, loop_end exclusive; both 0 without a loop */
 } sp_key_bank;
 

@@ -277,6 +277,26 @@ fn refuses_loop_points() {
 }
 
 #[test]
+fn refuses_end_not_after_start() {
+    refused(Error::BadEnd, |d| {
+        d[BANK1 + 24] = 7;
+        d[BANK1 + 28] = 7;
+    });
+    refused(Error::BadEnd, |d| {
+        d[BANK1 + 24] = 8;
+        d[BANK1 + 28] = 7;
+    });
+    // end 0 with any start, and end just after start, are accepted
+    for (start, end) in [(9u8, 0u8), (7, 8)] {
+        let mut d = example();
+        d[BANK1 + 24] = start;
+        d[BANK1 + 28] = end;
+        reseal(&mut d);
+        Waveform::parse(&d).unwrap();
+    }
+}
+
+#[test]
 fn refuses_unsorted_banks() {
     refused(Error::NotSorted, |d| {
         let b0: Vec<u8> = d[BANK0..BANK1].to_vec();
