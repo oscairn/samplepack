@@ -240,14 +240,12 @@ impl<'a> Waveform<'a> {
         if u32_at(d, 12) != crc32c(w.body) {
             return Err(Error::BadChecksum);
         }
-        if w.banks
-            .iter()
-            .any(|b| b.get(7) != Some(&0) || b.get(10..12) != Some(&[0, 0]) || b.get(22..24) != Some(&[0, 0]))
-        {
-            return Err(Error::ReservedNonZero);
-        }
         for b in w.banks {
-            KeyBank::from_bytes(b).check(w.samples.len())?;
+            let k = KeyBank::from_bytes(b);
+            if k.to_bytes() != *b {
+                return Err(Error::ReservedNonZero);
+            }
+            k.check(w.samples.len())?;
         }
         for (i, id) in w.samples.iter().enumerate() {
             if w.samples.get(..i).is_some_and(|s| s.contains(id)) {
@@ -343,7 +341,7 @@ impl<'a> Waveform<'a> {
 
 /// Writes the canonical file for `banks`, whose `sample` fields index `ids` (in any order;
 /// duplicates and unused ids are allowed), into `out`, and returns its length. `out` needs
-/// [`file_len`] bytes, at most 20 + 72 x K.
+/// [`file_len`] bytes, at most 20 + 72 x K; its contents are unspecified after an error.
 pub fn build(banks: &[KeyBank], ids: &[SampleId], out: &mut [u8]) -> Result<usize, Error> {
     let len = file_len(banks, ids)?;
     let out = out.get_mut(..len).ok_or(Error::BufferTooSmall)?;

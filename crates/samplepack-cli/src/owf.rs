@@ -68,7 +68,7 @@ fn show(args: &[String], all: bool) -> Result<(), String> {
 
 /// The key bank for a whole sample of `frames` frames: every key and velocity, root and tune
 /// from the WAV `smpl` chunk (root 60 without one), its first loop if that is a forward loop.
-pub fn smpl_bank(smpl: Option<&[u8]>, frames: usize) -> Result<KeyBank, String> {
+fn smpl_bank(smpl: Option<&[u8]>, frames: usize) -> Result<KeyBank, String> {
     let mut b = KeyBank {
         key_hi: 127,
         vel_lo: 1,
