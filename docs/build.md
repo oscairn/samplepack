@@ -36,7 +36,9 @@ target_link_libraries(my_target PRIVATE samplepack::samplepack)   # adds the inc
 
 `cmake/SamplePack.cmake` runs `cargo build --release --locked --offline -p samplepack-capi --target
 <triple>` from the source tree (so rustup picks the pinned compiler) and exposes the result as the
-imported target `samplepack::samplepack`. The triple comes from the active system and architecture,
+imported target `samplepack::samplepack`. The cargo step runs on every build and cargo decides what
+is stale, so editing any source file, manifest, `Cargo.lock` or `rust-toolchain.toml` rebuilds the
+library; when nothing changed the library keeps its time stamp and nothing relinks. The triple comes from the active system and architecture,
 or `-DSAMPLEPACK_RUST_TARGET=...`. With several `CMAKE_OSX_ARCHITECTURES` each is built and joined
 with `lipo`. Extra rustc flags go in `SAMPLEPACK_RUSTFLAGS`, for example
 `-DSAMPLEPACK_RUSTFLAGS="-C;target-cpu=x86-64-v2"`.

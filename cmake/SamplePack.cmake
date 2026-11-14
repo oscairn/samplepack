@@ -72,39 +72,41 @@ set(_sp_flags "--remap-path-prefix" "${_sp_root}=/samplepack" "--remap-path-pref
 list(APPEND _sp_flags ${SAMPLEPACK_RUSTFLAGS})
 string(REPLACE ";" "${_sp_us}" _sp_encoded "${_sp_flags}")
 
-set(_sp_outputs "")
+# The cargo step runs on every build and cargo decides what is stale (it tracks every source file,
+# Cargo.toml, Cargo.lock and the toolchain; a no-op check takes well under a second). Cargo leaves
+# the library untouched when nothing changed, so consumers do not relink.
+set(_sp_cmds "")
 set(_sp_built "")
 foreach(t IN LISTS _sp_triples)
   set(_dir "${CMAKE_BINARY_DIR}/samplepack-cargo/${t}")
-  set(_out "${_dir}/${t}/release/${_sp_libname}")
-  add_custom_command(
-    OUTPUT "${_out}"
+  list(APPEND _sp_built "${_dir}/${t}/release/${_sp_libname}")
+  list(APPEND _sp_cmds
     COMMAND ${CMAKE_COMMAND} -E env "CARGO_ENCODED_RUSTFLAGS=${_sp_encoded}"
             ${SAMPLEPACK_CARGO} build --release --locked --offline -p samplepack-capi
-            --target "${t}" --target-dir "${_dir}"
-    WORKING_DIRECTORY "${_sp_root}"
-    DEPENDS "${_sp_root}/Cargo.toml" "${_sp_root}/Cargo.lock" "${_sp_root}/rust-toolchain.toml"
-            "${_sp_root}/crates/samplepack/Cargo.toml" "${_sp_root}/crates/samplepack-capi/Cargo.toml"
-    COMMENT "cargo build samplepack (${t})"
-    VERBATIM)
-  list(APPEND _sp_built "${_out}")
+            --target "${t}" --target-dir "${_dir}")
 endforeach()
 
 list(LENGTH _sp_built _sp_n)
 if(_sp_n EQUAL 1)
   list(GET _sp_built 0 _sp_lib)
 else()
-  set(_sp_lib "${CMAKE_BINARY_DIR}/samplepack-cargo/universal/${_sp_libname}")
-  add_custom_command(
-    OUTPUT "${_sp_lib}"
-    COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/samplepack-cargo/universal"
-    COMMAND lipo -create ${_sp_built} -output "${_sp_lib}"
-    DEPENDS ${_sp_built}
-    COMMENT "lipo samplepack"
-    VERBATIM)
+  set(_sp_uni "${CMAKE_BINARY_DIR}/samplepack-cargo/universal")
+  set(_sp_lib "${_sp_uni}/${_sp_libname}")
+  # lipo into a temporary file and copy only if it differs, so an unchanged library keeps its time.
+  list(APPEND _sp_cmds
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${_sp_uni}"
+    COMMAND lipo -create ${_sp_built} -output "${_sp_uni}/new-${_sp_libname}"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_sp_uni}/new-${_sp_libname}" "${_sp_lib}")
 endif()
 
-add_custom_target(samplepack_build DEPENDS "${_sp_lib}")
+set(_sp_byproducts ${_sp_built} "${_sp_lib}")
+list(REMOVE_DUPLICATES _sp_byproducts)
+add_custom_target(samplepack_build
+  ${_sp_cmds}
+  BYPRODUCTS ${_sp_byproducts}
+  WORKING_DIRECTORY "${_sp_root}"
+  COMMENT "cargo build samplepack (${_sp_triples})"
+  VERBATIM)
 add_library(samplepack::samplepack STATIC IMPORTED GLOBAL)
 set_target_properties(samplepack::samplepack PROPERTIES
   IMPORTED_LOCATION "${_sp_lib}"
