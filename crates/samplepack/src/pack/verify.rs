@@ -2,7 +2,7 @@
 //! Full verification: zero padding, every frame decoded with its CRCs checked and its header
 //! compared with the record, the window, the MD5 and the recomputed sample id.
 
-use super::{find, rd_u32, rd_u64, Entry, Error, IndexEntry, Pack, Record, RecordInfo, FOOTER, PAGE, PREFIX};
+use super::{find, rd_u16, rd_u32, rd_u64, Entry, Error, IndexEntry, Pack, Record, RecordInfo, FOOTER, PAGE, PREFIX};
 use crate::flac::{self, Scratch, FLAG_CHECK_CRC, MAX_BLOCK};
 use crate::hash::Md5;
 use crate::id::{IdHasher, SampleId};
@@ -140,7 +140,8 @@ fn decode_pass(rec: &Record, vs: &mut VerifyScratch) -> Result<([u8; 16], Sample
         (h.wrapping_add(window.len()), fstart),
         (fend, b.len()),
     ];
-    if pads.iter().any(|&(s, e)| !b.get(s..e).is_some_and(zero)) {
+    // Entries of a newer minor version may use their padding (section 14).
+    if i.minor == 0 && pads.iter().any(|&(s, e)| !b.get(s..e).is_some_and(zero)) {
         return Err(Error::Padding);
     }
     let mut wpos = 0usize;
@@ -197,9 +198,10 @@ pub fn verify_pack(pack: &Pack, vs: &mut VerifyScratch, index: &mut [IndexEntry]
             _ => continue,
         };
         let checked = rd_u32(data, at.wrapping_add(16)) as usize;
-        if !data
-            .get(at.wrapping_add(checked)..at.wrapping_add(end))
-            .is_some_and(zero)
+        if rd_u16(data, at.wrapping_add(6)) == 0
+            && !data
+                .get(at.wrapping_add(checked)..at.wrapping_add(end))
+                .is_some_and(zero)
         {
             return Err(Error::Padding);
         }

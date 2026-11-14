@@ -222,6 +222,26 @@ fn unknown_entries_and_newer_minor_are_skipped() {
     let p = Pack::open(&pk).unwrap();
     let e = p.entries().next().unwrap();
     assert_eq!(p.record(&e).unwrap().info().minor, 1);
+    // and its padding (section 14): after the checked bytes and after the frames
+    let len = rd32(&pk, r0 + 8) as usize;
+    let mut np = pk.clone();
+    for at in [rd32(&pk, r0 + 16) as usize, len - 1] {
+        np[r0 + at] = 0x5A;
+    }
+    let p = Pack::open(&np).unwrap();
+    assert_eq!(verify_pack(&p, &mut vs(), &mut [IndexEntry::default(); 2]), Ok(1));
+    // a minor-1 tombstone and trailer may use their padding too
+    let b = record(MONO, 0, "");
+    let mut tp = build(&[&a, &b]);
+    append(&mut tp, &[Item::Tomb(e.id)]);
+    let (ts, t) = (tp.len() - 2 * PAGE, trailer_at(&tp));
+    for at in [ts, t] {
+        tp[at + 6] = 1;
+        tp[at + 200] = 0x5A;
+        reseal(&mut tp, at);
+    }
+    let p = Pack::open(&tp).unwrap();
+    assert_eq!(verify_pack(&p, &mut vs(), &mut [IndexEntry::default(); 4]), Ok(1));
     // the same at minor 0 is rejected
     pk[r0 + 6] = 0;
     reseal(&mut pk, r0);

@@ -377,8 +377,8 @@ panic-free: a build whose panic handler cannot link still links (`tools/check-no
 | --- | --- | --- |
 | Open | section 11 | every time a pack is opened |
 | Record access | prefix and checksum, every header field and rule of 6.2 and 6.4, UTF-8 credit, frame table increasing with the stated smallest and largest frame, and agreement with the index entry (id, length, preload; `MISMATCH`) | every time a record is first used (`Pack::record`, `sp_pack_record`) |
-| Full, per record | record access, plus: all padding zero; every frame decoded with CRC-8 and CRC-16 checked and the rules of 6.5; window equal to the decoded frames; MD5 and sample id recomputed and equal | before a record is installed or imported, before an install may skip a sample by id against it, and on explicit maintenance (`verify_record`, `sp_record_verify`) |
-| Full, per pack | open, every entry well formed with zero padding, the rebuilt live set equal to the trailer, and full verification of every live record | after writing a pack, when a pack's identity guard fails (Appendix A), on explicit maintenance (`verify_pack`, `sp_pack_verify`, `samplepack verify --full`) |
+| Full, per record | record access, plus: all padding zero (minor-0 records; section 14); every frame decoded with CRC-8 and CRC-16 checked and the rules of 6.5; window equal to the decoded frames; MD5 and sample id recomputed and equal | before a record is installed or imported, before an install may skip a sample by id against it, and on explicit maintenance (`verify_record`, `sp_record_verify`) |
+| Full, per pack | open, every entry well formed, with zero padding if it is of minor version 0, the rebuilt live set equal to the trailer, and full verification of every live record | after writing a pack, when a pack's identity guard fails (Appendix A), on explicit maintenance (`verify_pack`, `sp_pack_verify`, `samplepack verify --full`) |
 
 At play time a loader decodes without CRC checks: on the target, the subset decoder costs about
 27 to 30 instructions per sample, and checking frame CRCs while decoding costs about 23% more.
