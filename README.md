@@ -55,3 +55,7 @@ there is no recursion and no frame of variable size.
 
 MIT, see `LICENSE`. Source files start with an SPDX line. The repository contains no third-party
 code; the test corpus and the fuzz seed packs are made from synthetic signals.
+
+This project is independent and is not affiliated with or endorsed by any instrument manufacturer.
+It contains and distributes no manufacturer samples, presets, firmware or code. Product names, where
+they appear at all, belong to their owners.

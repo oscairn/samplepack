@@ -628,14 +628,14 @@ The format and library leave these to the host:
 
 | Draft | This specification | Why |
 | --- | --- | --- |
-| `.opack`; magics `OSPK`, `OSR1`, `OST1`, `OSI1`, `OSF1` | `.osp`; magics `OSPH`, `OSPR`, `OSPT`, `OSPI`, `OSPF` | the owner named the format OSP |
+| `.opack`; magics `OSPK`, `OSR1`, `OST1`, `OSI1`, `OSF1` | `.osp`; magics `OSPH`, `OSPR`, `OSPT`, `OSPI`, `OSPF` | the maintainer named the format OSP |
 | Per-type CRC-32 at type-specific offsets | one frozen 24-byte prefix with CRC-32C for every entry | one scan and checksum rule for all entry types; unknown types can be skipped safely |
-| `split` field for two-stream loops | none | the owner ruled out loop splitting: one stream per record |
+| `split` field for two-stream loops | none | the maintainer ruled out loop splitting: one stream per record |
 | 32-byte footer after the trailer | footer is the last 32 bytes of the trailer entry | every entry and every committed pack stays a multiple of 4,096 |
 | Trailer sorted by id: {id, offset} | trailer in file order: {id, offset, length, preload}; the caller's index is sorted by id | overlap and order checked in one pass without memory; preload hints issued from the trailer alone |
 | Recovery by scanning forward to the last good trailer | backward search for the largest prefix that opens; forward replay for rebuilding and verifying | damage in the middle of a pack cannot make recovery truncate committed records |
 | 1 GiB cap as a writer rule | readers also reject packs over 1 GiB | one limit, enforced on both sides |
-| Records on a 1,024-frame grid | block size field: 256 to 4,096 (powers of two), window a multiple of it | the task required a block size field; the reference writer uses 1,024 |
-| Export: dependency by default, "Embed all" option | embed every used sample by default; dependency only as a non-default option | the owner's ruling |
+| Records on a 1,024-frame grid | block size field: 256 to 4,096 (powers of two), window a multiple of it | a block size field was needed; the reference writer uses 1,024 |
+| Export: dependency by default, "Embed all" option | embed every used sample by default; dependency only as a non-default option | the maintainer's ruling |
 | "LPC > 4 is a newer format" (failure table) | LPC up to order 8 is version 1 | the subset decoder accepts order 8 |
 | Credit: bytes | credit must be UTF-8 | it is displayed text; a reader can rely on it |
