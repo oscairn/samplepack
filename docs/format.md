@@ -176,7 +176,7 @@ means rewriting the record (new H, W and length); a byte copy never changes it.
 
 The frames are one standard FLAC stream (RFC 9639) without the `fLaC` marker and metadata,
 restricted to the subset in `docs/decoder.md`: 16-bit, the record's channel count, constant,
-verbatim, fixed (order 0 to 4) or LPC (order 1 to 8) subframes, Rice or Rice2 residuals. In
+verbatim, fixed (order 0 to 4) or LPC (order 1 to 32) subframes, Rice or Rice2 residuals. In
 addition:
 
 - fixed blocking strategy (frame header bit 0 of byte 1 clear);

@@ -14,7 +14,7 @@
 #define FSD_MAXB 4096
 #endif
 #ifndef FSD_MAXLPC
-#define FSD_MAXLPC 8
+#define FSD_MAXLPC 32
 #endif
 
 #ifndef FSD_STAT
@@ -88,6 +88,9 @@ static int fsd_residual(fsd_br *r, int32_t *s, int n, int order) {
 // unsigned accumulation: identical to the exact sum for valid frames, no undefined overflow for malformed ones
 #define FSD_LPC32(N) case N: for (int i = N; i < n; i++) { uint32_t a = 0; for (int j = 0; j < N; j++) a += (uint32_t)q[j] * (uint32_t)s[i - 1 - j]; s[i] = (int32_t)((uint32_t)s[i] + (uint32_t)((int32_t)a >> sh)); } break;
 #define FSD_LPC64(N) case N: for (int i = N; i < n; i++) { uint64_t a = 0; for (int j = 0; j < N; j++) a += (uint64_t)((int64_t)q[j] * s[i - 1 - j]); s[i] = (int32_t)((uint32_t)s[i] + (uint32_t)(int32_t)((int64_t)a >> sh)); } break;
+// the same sums with the order a run-time value, for orders above 8
+#define FSD_LPC32_ANY for (int i = order; i < n; i++) { uint32_t a = 0; for (int j = 0; j < order; j++) a += (uint32_t)q[j] * (uint32_t)s[i - 1 - j]; s[i] = (int32_t)((uint32_t)s[i] + (uint32_t)((int32_t)a >> sh)); } break;
+#define FSD_LPC64_ANY for (int i = order; i < n; i++) { uint64_t a = 0; for (int j = 0; j < order; j++) a += (uint64_t)((int64_t)q[j] * s[i - 1 - j]); s[i] = (int32_t)((uint32_t)s[i] + (uint32_t)(int32_t)((int64_t)a >> sh)); } break;
 
 static int fsd_subframe(fsd_br *r, int32_t *s, int n, int bps) {
     if (fsd_get(r, 1)) return -1;
@@ -117,8 +120,8 @@ static int fsd_subframe(fsd_br *r, int32_t *s, int n, int bps) {
         if (fsd_residual(r, s, n, order)) return -1;
         // 32-bit sums are exact when bps + prec + ceil(log2(order)) <= 32 (as libFLAC decides)
         int lg = 0; while ((1 << lg) < order) lg++;
-        if (bps + prec + lg <= 32) { switch (order) { FSD_LPC32(1) FSD_LPC32(2) FSD_LPC32(3) FSD_LPC32(4) FSD_LPC32(5) FSD_LPC32(6) FSD_LPC32(7) FSD_LPC32(8) } }
-        else { FSD_STAT(st_lpc64++;) switch (order) { FSD_LPC64(1) FSD_LPC64(2) FSD_LPC64(3) FSD_LPC64(4) FSD_LPC64(5) FSD_LPC64(6) FSD_LPC64(7) FSD_LPC64(8) } }
+        if (bps + prec + lg <= 32) { switch (order) { FSD_LPC32(1) FSD_LPC32(2) FSD_LPC32(3) FSD_LPC32(4) FSD_LPC32(5) FSD_LPC32(6) FSD_LPC32(7) FSD_LPC32(8) default: FSD_LPC32_ANY } }
+        else { FSD_STAT(st_lpc64++;) switch (order) { FSD_LPC64(1) FSD_LPC64(2) FSD_LPC64(3) FSD_LPC64(4) FSD_LPC64(5) FSD_LPC64(6) FSD_LPC64(7) FSD_LPC64(8) default: FSD_LPC64_ANY } }
     } else return -1;
     if (wasted) for (int i = 0; i < n; i++) s[i] = (int32_t)((uint32_t)s[i] << wasted);
     return r->bad ? -1 : 0;

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-//! Subframes: constant, verbatim, fixed predictors (order 0..=4) and LPC (order 1..=8), with
+//! Subframes: constant, verbatim, fixed predictors (order 0..=4) and LPC (order 1..=32), with
 //! Rice / Rice2 residuals. All arithmetic on sample values wraps in 32 bits (64 bits for wide
 //! LPC sums), so malformed streams give defined, reproducible output.
 
@@ -85,10 +85,12 @@ fn fixed_predict(s: &mut [i32], order: usize) {
 }
 
 /// `q` holds the coefficients reversed: `q[0]` applies to the oldest sample of the window.
-fn lpc<const N: usize>(s: &mut [i32], q: &[i32], sh: u32, wide: bool) {
+/// Inlined, so the orders with a literal `order` below get unrolled loops.
+#[inline(always)]
+fn lpc(s: &mut [i32], q: &[i32], order: usize, sh: u32, wide: bool) {
     let cells = Cell::from_mut(s).as_slice_of_cells();
-    let q = q.get(..N).unwrap_or(&[]);
-    for w in cells.windows(N.wrapping_add(1)) {
+    let q = q.get(..order).unwrap_or(&[]);
+    for w in cells.windows(order.wrapping_add(1)) {
         if let Some((x, hist)) = w.split_last() {
             let d = if wide {
                 let mut a = 0u64;
@@ -177,14 +179,15 @@ pub(super) fn subframe(r: &mut BitReader, s: &mut [i32], bps: u32) -> Result<(),
             let lg = usize::BITS.wrapping_sub((order.wrapping_sub(1)).leading_zeros());
             let wide = bps.wrapping_add(prec).wrapping_add(lg) > 32;
             match order {
-                1 => lpc::<1>(s, &q, sh, wide),
-                2 => lpc::<2>(s, &q, sh, wide),
-                3 => lpc::<3>(s, &q, sh, wide),
-                4 => lpc::<4>(s, &q, sh, wide),
-                5 => lpc::<5>(s, &q, sh, wide),
-                6 => lpc::<6>(s, &q, sh, wide),
-                7 => lpc::<7>(s, &q, sh, wide),
-                _ => lpc::<8>(s, &q, sh, wide),
+                1 => lpc(s, &q, 1, sh, wide),
+                2 => lpc(s, &q, 2, sh, wide),
+                3 => lpc(s, &q, 3, sh, wide),
+                4 => lpc(s, &q, 4, sh, wide),
+                5 => lpc(s, &q, 5, sh, wide),
+                6 => lpc(s, &q, 6, sh, wide),
+                7 => lpc(s, &q, 7, sh, wide),
+                8 => lpc(s, &q, 8, sh, wide),
+                _ => lpc(s, &q, order, sh, wide),
             }
         }
         _ => return Err(Error::BadSubframe),

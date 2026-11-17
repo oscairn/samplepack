@@ -36,14 +36,6 @@ fn corpus_matches_flac_decoder() {
         let data = &file[first..];
         let mut table = vec![FrameEntry::default(); 4096];
         let scan = flac::scan(data, FLAG_CHECK_CRC, &mut scratch, &mut table);
-        if name.contains("-l12-") {
-            assert_eq!(
-                scan.status,
-                Err(Error::Unsupported),
-                "{name}: orders above 8 must be rejected"
-            );
-            continue;
-        }
         assert_eq!(scan.status, Ok(()), "{name}");
         assert_eq!(scan.consumed, data.len(), "{name}");
         let mono = name.contains("-mono-");
@@ -78,6 +70,57 @@ fn corpus_matches_flac_decoder() {
     for code in [0usize, 1, 8, 9, 10] {
         assert!(assigns[code] > 0, "corpus has no frames with channel assignment {code}");
     }
+}
+
+/// A mono, 64-sample frame with one order-32 LPC subframe, built here (no encoder produces order
+/// 32 from a sweep): zero-padded warm-up, 3-bit coefficients, shift 1, Rice parameter 0.
+/// Returns the frame and the samples a direct evaluation of the predictor gives.
+fn order32_frame() -> (Vec<u8>, Vec<i16>) {
+    let mut bits = Vec::new();
+    let put = |v: u32, n: u32, b: &mut Vec<bool>| (0..n).rev().for_each(|i| b.push(v >> i & 1 != 0));
+    let mut q = [0i32; 32]; // q[j] applies to the sample j + 1 back
+    (q[0], q[1], q[31]) = (2, -1, 1);
+    let warm: Vec<i32> = (0..32).map(|i| (i * 37 % 200) - 100).collect();
+    let res: Vec<i32> = (0..32).map(|i| (i * 5 % 7) - 3).collect();
+    put(63 << 1, 8, &mut bits); // padding bit, type 63 (LPC order 32), no wasted bits
+    warm.iter().for_each(|&w| put(w as u32 & 0xFFFF, 16, &mut bits));
+    put(2, 4, &mut bits); // precision 3
+    put(1, 5, &mut bits); // shift
+    q.iter().for_each(|&c| put(c as u32 & 7, 3, &mut bits));
+    put(0, 2, &mut bits); // Rice
+    put(0, 4, &mut bits); // one partition
+    put(0, 4, &mut bits); // parameter 0
+    res.iter().for_each(|&v| {
+        let u = ((v << 1) ^ (v >> 31)) as u32;
+        (0..u).for_each(|_| bits.push(false));
+        bits.push(true);
+    });
+    let mut pcm = warm.clone();
+    for r in res {
+        let n = pcm.len();
+        let a: i64 = (0..32).map(|j| i64::from(q[j]) * i64::from(pcm[n - 1 - j])).sum();
+        pcm.push(r + (a >> 1) as i32);
+    }
+    // FFF8, 64-sample block (8-bit size code), 44.1 kHz, mono 16-bit, frame number 0
+    let mut f = vec![0xFF, 0xF8, 0x69, 0x08, 0x00, 63];
+    f.push(flac::crc8(&f));
+    f.extend(
+        bits.chunks(8)
+            .map(|c| c.iter().enumerate().fold(0u8, |a, (i, &b)| a | u8::from(b) << (7 - i))),
+    );
+    let c = flac::crc16(&f);
+    f.extend(c.to_be_bytes());
+    (f, pcm.iter().map(|&v| v as i16).collect())
+}
+
+#[test]
+fn lpc_order_32() {
+    let (frame, pcm) = order32_frame();
+    let mut s = Box::new(Scratch::new());
+    let (mut l, mut r) = (vec![0i16; MAX_BLOCK], vec![0i16; MAX_BLOCK]);
+    let info = flac::decode_frame(&frame, FLAG_CHECK_CRC, &mut s, &mut l, &mut r).unwrap();
+    assert_eq!((info.samples, info.consumed), (64, frame.len() as u32));
+    assert_eq!(&l[..64], &pcm[..]);
 }
 
 fn first_frame_of(name: &str) -> Vec<u8> {

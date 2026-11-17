@@ -28,7 +28,7 @@ extern "C" {
 /* Largest FLAC block size (samples per channel) the decoder accepts. */
 #define SP_FLAC_MAX_BLOCK 4096
 /* Highest LPC order accepted. */
-#define SP_FLAC_MAX_LPC_ORDER 8
+#define SP_FLAC_MAX_LPC_ORDER 32
 
 typedef enum sp_status {
     SP_OK = 0,

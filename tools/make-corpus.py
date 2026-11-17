@@ -110,7 +110,13 @@ for sig in ("sweep", "noise", "colored", "correlated", "antiphase", "clipped"):
     CASES.append((sig, 2, 1152, 6, ["-A", "tukey(0.5)"], 12345))
 CASES.append(("sweep", 1, 4096, 8, [], 192000))
 CASES.append(("sweep", 1, 100, 3, [], 44100))
-CASES.append(("sweep", 2, 1024, 12, [], 44100))   # LPC orders above 8 appear: outside the subset
+CASES.append(("sweep", 2, 1024, 12, [], 44100))   # LPC orders above 8 appear
+CASES.append(("sweep", 1, 1024, 9, [], 44100))
+CASES.append(("sweep", 1, 4096, 10, [], 44100))
+CASES.append(("sweep", 2, 4096, 11, [], 44100))
+CASES.append(("sweep", 1, 4096, 12, ["-q", "8"], 44100))   # 32-bit prediction sums
+CASES.append(("sweep", 1, 4096, 32, [], 44100))
+CASES.append(("sweep", 2, 1024, 32, [], 44100))
 CASES.append(("noise", 2, 4096, 4, ["-r", "0"], 44100))
 CASES.append(("colored", 2, 4096, 4, ["-r", "15"], 44100))
 

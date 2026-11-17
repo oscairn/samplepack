@@ -14,7 +14,7 @@ rejected, never approximated. Entry points: `decode_frame`, `scan`, `first_frame
 | Block size | 1 to 4096 samples, any header coding: the 4-bit table values 192, 576, 1152, 2304, 256, 512, 1024, 2048, 4096, or an explicit 8- or 16-bit value |
 | Sample rate | any header code except the reserved one; the value is not used |
 | Blocking strategy | fixed or variable; the coded frame/sample number is checked for form but its value is not used |
-| Subframes | constant; verbatim; fixed predictor of order 0 to 4; LPC of order 1 to 8 |
+| Subframes | constant; verbatim; fixed predictor of order 0 to 4; LPC of order 1 to 32 |
 | Residual | Rice and Rice2 coding, any partition order that divides the block size, escaped partitions |
 | Wasted bits | accepted (fewer than the sample width) |
 | Checksums | CRC-8 of the header and CRC-16 of the frame, verified only when `SP_FLAC_CHECK_CRC` is passed |
@@ -39,7 +39,7 @@ order is reported.
 | 3 | `TRUNCATED` | fewer than 6 bytes; the data ends inside the coded number, the explicit block-size or sample-rate bytes, or before the header CRC-8 byte |
 | 4 | `BAD_SYNC` | first byte is not 0xFF, or the second is not 0xF8 / 0xF9 |
 | 5 | `RESERVED_VALUE` | reserved bit after the sample size set; sample rate code 15; channel assignment 11 to 15; sample size code 3 or 7; block size code 0; coded number whose first byte is 10xxxxxx or 0xFF, or 0xFE in a fixed-block-size frame, or whose continuation bytes are not 10xxxxxx |
-| 6 | `UNSUPPORTED` | sample size code 1, 2, 5 or 6 (8, 12, 20, 24 bit); block size above 4096; channel assignment 2 to 7 (three to eight independent channels); LPC order 9 to 32 |
+| 6 | `UNSUPPORTED` | sample size code 1, 2, 5 or 6 (8, 12, 20, 24 bit); block size above 4096; channel assignment 2 to 7 (three to eight independent channels) |
 | 7 | `HEADER_CRC` | CRC-8 mismatch (only with the CRC flag) |
 | 8 | `BAD_SUBFRAME` | subframe padding bit set; subframe type 2 to 7 or 13 to 31 (reserved); fixed or LPC order larger than the block size; wasted-bits count not below the sample width; LPC precision field 15; negative LPC shift |
 | 9 | `BAD_RESIDUAL` | residual coding method 2 or 3; block size not divisible by 2^partition order; partition smaller than the predictor order |

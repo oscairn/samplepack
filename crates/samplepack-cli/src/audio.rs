@@ -86,7 +86,7 @@ pub fn read_wav(d: &[u8], what: &str) -> Result<Audio, String> {
 }
 
 /// Reads a FLAC file. Frames inside the reader's subset are decoded by the library; anything else
-/// (LPC orders above 8, other block sizes) is decoded by the stock `flac` tool.
+/// (block sizes above 4096) is decoded by the stock `flac` tool.
 pub fn read_flac(path: &Path, d: &[u8], what: &str) -> Result<Audio, String> {
     let bad = || format!("{what}: not a FLAC file");
     if d.get(..4) != Some(b"fLaC") || d.get(4).map(|b| b & 0x7F) != Some(0) {

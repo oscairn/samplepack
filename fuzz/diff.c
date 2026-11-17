@@ -110,7 +110,7 @@ static void split_into_frames(const char *path) {
     int16_t out[2 * FSD_MAXB];
     for (const uint8_t *p = d + o; p < d + n;) {
         int a, b, l = fsd_decode_frame(p, d + n, 1, out, &a, &b);
-        if (l < 0) break;                       // e.g. LPC order above 8: keep what decoded
+        if (l < 0) break;                       // e.g. a frame outside the subset: keep what decoded
         if (nframes == capframes) { capframes = capframes ? capframes * 2 : 256; frames = realloc(frames, capframes * sizeof *frames); }
         size_t extra = (size_t)(d + n - (p + l)); if (extra > 64) extra = 64;   // real bytes that follow, so len may exceed the frame
         frames[nframes].d = malloc((size_t)l + extra); memcpy(frames[nframes].d, p, (size_t)l + extra); frames[nframes].len = (size_t)l + extra;

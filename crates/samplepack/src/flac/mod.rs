@@ -12,7 +12,7 @@ pub use crc::{crc16, crc8};
 /// Largest block size accepted, in samples per channel.
 pub const MAX_BLOCK: usize = 4096;
 /// Highest LPC order accepted.
-pub const MAX_LPC_ORDER: usize = 8;
+pub const MAX_LPC_ORDER: usize = 32;
 /// Flag: verify the CRC-8 of the frame header and the CRC-16 of the frame.
 pub const FLAG_CHECK_CRC: u32 = 1;
 /// Every flag bit this version understands.

@@ -81,3 +81,9 @@ sweep-mono-b100-l3-r44100
 sweep-st-b1024-l12-r44100
 noise-st-b4096-l4-r0-r44100
 colored-st-b4096-l4-r15-r44100
+sweep-mono-b1024-l9-r44100
+sweep-mono-b4096-l10-r44100
+sweep-mono-b4096-l12-q8-r44100
+sweep-mono-b4096-l32-r44100
+sweep-st-b1024-l32-r44100
+sweep-st-b4096-l11-r44100
